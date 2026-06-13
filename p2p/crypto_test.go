@@ -11,7 +11,7 @@ func TestCopyEncryptDecrypt(t *testing.T) {
     cipherOut := new(bytes.Buffer)
     key := []byte("asdwedscfrgtvfdybhghnjhgrfdrefrd")
 
-    _, err := CopyEncrypt(key, cipherOut, src)
+    _, err := CopyEncrypt(key, cipherOut, src, nil)
     if err != nil {
         t.Error(err)
     }
@@ -21,7 +21,7 @@ func TestCopyEncryptDecrypt(t *testing.T) {
     }
 
     decryptOut := new(bytes.Buffer)
-    _, err = CopyDecrypt(key, decryptOut, cipherOut)
+    _, err = CopyDecrypt(key, decryptOut, cipherOut, nil)
     if err != nil {
         t.Error(err)
     }
