@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"sync"
+	"time"
 
+	"github.com/MHS-20/Kademlia/kademlia"
 	"github.com/chiragsoni81245/foreverstore/p2p"
 )
-
 
 type Message struct {
     Payload any
@@ -29,13 +31,19 @@ type MessageStoreFile struct {
 type FileServerOpts struct {
     StorageRoot string
     PathTransformFunc PathTransformFunc
-    Transport p2p.Transport
-    BootstrapNodes []string
     EncryptionKey []byte
+    TCPListenAddr string
+    DHTListenAddr string
+    TCPBootstrapNodes []string
+    DHTBootstrapAddr string
 }
 
 type FileServer struct {
     FileServerOpts
+
+    dhtNode      *kademlia.Node
+    dhtTransport *kademlia.UDPTransport
+    tcpTransport *p2p.TCPTrasport
 
     peerLock sync.Mutex
     peers map[string]p2p.Peer
@@ -49,12 +57,41 @@ func NewFileServer(opts FileServerOpts) *FileServer {
         Root: opts.StorageRoot,
         PathTransformFunc: opts.PathTransformFunc,
     }
-    return &FileServer{
+
+    tcpOpts := p2p.TCPTransportOpts{
+        ListenAddr: opts.TCPListenAddr,
+        HandshakeFunc: p2p.DiffieHallmanHandshake,
+        Decoder: &p2p.DefaultDecoder{},
+    }
+    tcpTransport := p2p.NewTCPTransport(tcpOpts)
+
+    selfContact := kademlia.Contact{
+        ID:   kademlia.RandomNodeID(),
+        Addr: &net.UDPAddr{IP: net.IPv4zero, Port: addrPort(opts.DHTListenAddr)},
+    }
+    dhtTrans := kademlia.NewUDPTransport()
+    dhtMemStore := kademlia.NewMemoryStore()
+    dhtNode := kademlia.NewNode(selfContact, dhtTrans, dhtMemStore)
+
+    fs := &FileServer{
         FileServerOpts: opts,
         store: NewStore(storeOpts),
+        tcpTransport: tcpTransport,
+        dhtNode: dhtNode,
+        dhtTransport: dhtTrans,
         quitch: make(chan struct{}),
         peers: make(map[string]p2p.Peer),
     }
+    tcpTransport.OnPeer = fs.OnPeer
+
+    return fs
+}
+
+func addrPort(addr string) int {
+    _, port, _ := net.SplitHostPort(addr)
+    var p int
+    fmt.Sscanf(port, "%d", &p)
+    return p
 }
 
 func (fs *FileServer) getPeer(addr string) (p2p.Peer, error) {
@@ -69,37 +106,26 @@ func (fs *FileServer) getPeer(addr string) (p2p.Peer, error) {
     return peer, nil
 }
 
-func (fs *FileServer) bootstrapNetwork() error {
-    if len(fs.BootstrapNodes)==0 {return nil}
-    totalBootstrapedNodes := 0
-    wg := sync.WaitGroup{}
-    for _, addr := range fs.BootstrapNodes {
-        wg.Add(1)
-        go func(addr string, totalCount *int) {
-            log.Printf("attempting to connect with remote: %s", addr)
-            if err := fs.Transport.Dial(addr); err != nil {
-                log.Println(err)
-                wg.Done()
-                return
-            }
-            totalBootstrapedNodes++
-            wg.Done()
-        }(addr, &totalBootstrapedNodes)
+func (fs *FileServer) bootstrapTCPNetwork() error {
+    for _, addr := range fs.TCPBootstrapNodes {
+        log.Printf("connecting to TCP bootstrap: %s", addr)
+        if err := fs.tcpTransport.Dial(addr); err != nil {
+            log.Printf("TCP bootstrap dial %s: %v", addr, err)
+        }
     }
-    wg.Wait()
     return nil
 }
 
 func (fs *FileServer) loop() {
     defer func(){
         log.Printf("file server stopped due to user quit action")
-        if err := fs.Transport.Close(); err != nil {
+        if err := fs.tcpTransport.Close(); err != nil {
             log.Fatal(err)
         }
     }()
     for {
         select {
-        case rpc := <-fs.Transport.Consume():
+        case rpc := <-fs.tcpTransport.Consume():
             var msg Message;
             if err := gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&msg); err != nil {
                 log.Fatal(err)
@@ -136,7 +162,6 @@ func (fs *FileServer) handleStoreFileMessage(rpc *p2p.RPC, msgPayload *MessageSt
         return err
     }
 
-    // Telling the peer read loop that we have read the stream they can start reading for new data
     peer.CloseStream()
 
     return nil
@@ -150,7 +175,7 @@ func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetF
         size int64
         err error
     )
-    
+
     if !fs.store.Has(msgPayload.Key) {
         log.Printf("file requested via peer %s not found", rpc.From)
     } else {
@@ -165,19 +190,14 @@ func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetF
         return err
     }
 
-    // Initializing Stream
-    // To-Do
-    // Find a way so that while sending only IncomingStream type message we don't have to send these default arguments of (nil, 0) for reader and size
     err = peer.Send(p2p.IncomingStream, nil, 0)
 
-    // Sending file size into stream
     err = binary.Write(peer, binary.LittleEndian, size)
-    if err != nil { 
+    if err != nil {
         return err
     }
-    
+
     if size != 0 && r != nil {
-        // Sending file content
         _, err = io.Copy(peer, r)
     }
 
@@ -187,10 +207,9 @@ func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetF
 func (fs *FileServer) broadcast(msg *Message, r io.Reader) error {
     buf := new(bytes.Buffer)
     if err := gob.NewEncoder(buf).Encode(msg); err != nil {
-        return err 
+        return err
     }
     for _, peer := range fs.peers {
-        // Send message
         err := peer.Send(p2p.IncomingMessage, buf, int64(buf.Len()))
         if err != nil {
             log.Printf("error in sending message to peer %s", peer.RemoteAddr().String())
@@ -198,99 +217,166 @@ func (fs *FileServer) broadcast(msg *Message, r io.Reader) error {
 
         switch payload := msg.Payload.(type) {
         case *MessageStoreFile:
-            // Stream data
             peer.Send(p2p.IncomingStream, r, payload.Size)
         }
     }
     return nil
 }
 
+func (fs *FileServer) queryTCPPeers(key string) (io.Reader, int64, error) {
+    getFileMsg := &Message{
+        Payload: &MessageGetFile{
+            Key: key,
+        },
+    }
+    getFileMsgBuf := new(bytes.Buffer)
+    if err := gob.NewEncoder(getFileMsgBuf).Encode(getFileMsg); err != nil {
+        return nil, 0, err
+    }
+
+    fs.peerLock.Lock()
+    defer fs.peerLock.Unlock()
+
+    for _, peer := range fs.peers {
+        err := peer.Send(p2p.IncomingMessage, getFileMsgBuf, int64(getFileMsgBuf.Len()))
+        if err != nil {
+            log.Printf("error sending to peer %s: %v", peer.RemoteAddr().String(), err)
+            continue
+        }
+
+        var fileSize int64
+        err = binary.Read(peer, binary.LittleEndian, &fileSize)
+        if err != nil {
+            log.Printf("error reading file size from peer %s: %v", peer.RemoteAddr().String(), err)
+            continue
+        }
+
+        if fileSize == 0 {
+            log.Printf("file does not exist on peer %s", peer.RemoteAddr().String())
+            peer.CloseStream()
+            continue
+        }
+
+        _, err = fs.store.Write(key, peer.ReadStream(fileSize))
+        if err != nil {
+            return nil, 0, err
+        }
+        peer.CloseStream()
+
+        f, size, err := fs.store.Read(key)
+        if err != nil {
+            return nil, 0, err
+        }
+        return f, size, nil
+    }
+
+    return nil, 0, fmt.Errorf("file not found on any TCP peer")
+}
+
 func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
     if fs.store.Has(key) {
         f, size, err = fs.store.Read(key)
+        if err != nil {
+            return nil, 0, err
+        }
     } else {
-        // Local store does not have file associated with key
-        // Checking on network peers
-        log.Printf("requested file not found on local, checking on peer network")
+        log.Printf("file not found locally, checking DHT")
 
-        getFileMsg := &Message{
-            Payload: &MessageGetFile{
-                Key: key,
-            },
-        }
-        getFileMsgBuf := new(bytes.Buffer)
-        if err := gob.NewEncoder(getFileMsgBuf).Encode(getFileMsg); err != nil {
-            return nil, 0, err 
+        keyNodeID := kademlia.NewNodeID([]byte(key))
+
+        val, closest, err := fs.dhtNode.FindValue(keyNodeID)
+        if err != nil {
+            log.Printf("DHT find value: %v", err)
         }
 
-        fs.peerLock.Lock()
-        defer fs.peerLock.Unlock()
-        
-        for _, peer := range fs.peers {
-            err := peer.Send(p2p.IncomingMessage, getFileMsgBuf, int64(getFileMsgBuf.Len()))
-            if err != nil {
-                log.Printf("error in sending message to peer %s", peer.RemoteAddr().String())
-            }
-            
-            var fileSize int64
-            err = binary.Read(peer, binary.LittleEndian, &fileSize)
-            if err != nil {
-                return nil, 0, err
-            }
-
-            if fileSize == 0 {
-                log.Printf("file does not exists on peer (%s)", peer.LocalAddr().String())
-                peer.CloseStream()
-                continue
+        if val != nil {
+            tcpAddr := string(val)
+            if tcpAddr != fs.TCPListenAddr {
+                log.Printf("DHT advertisement found at %s, dialing via TCP", tcpAddr)
+                if err := fs.tcpTransport.Dial(tcpAddr); err != nil {
+                    log.Printf("dial %s: %v", tcpAddr, err)
+                } else {
+                    time.Sleep(100 * time.Millisecond)
+                    f, size, err = fs.queryTCPPeers(key)
+                    if err == nil {
+                        goto decrypt
+                    }
+                    log.Printf("query via DHT peer failed: %v", err)
+                }
             } else {
-                _, err = fs.store.Write(key, peer.ReadStream(fileSize)) 
-                if err != nil {
-                    return nil, 0, err
-                }
-                peer.CloseStream()
-
-                f, size, err = fs.store.Read(key)
-                if err != nil {
-                    return nil, 0, err
-                }
-                break
+                log.Printf("DHT advertisement points to self, skipping")
             }
+        }
+
+        if len(closest) > 0 {
+            log.Printf("trying %d closest DHT nodes", len(closest))
+            for _, c := range closest {
+                tcpAddr := net.JoinHostPort(
+                    c.Addr.IP.String(),
+                    fmt.Sprintf("%d", c.Addr.Port-5000),
+                )
+                if tcpAddr == fs.TCPListenAddr {
+                    continue
+                }
+                log.Printf("trying closest node at %s", tcpAddr)
+                if err := fs.tcpTransport.Dial(tcpAddr); err != nil {
+                    log.Printf("dial %s: %v", tcpAddr, err)
+                    continue
+                }
+                time.Sleep(100 * time.Millisecond)
+                f, size, err = fs.queryTCPPeers(key)
+                if err == nil {
+                    goto decrypt
+                }
+            }
+        }
+
+        log.Printf("DHT lookup failed, checking existing TCP peers")
+        f, size, err = fs.queryTCPPeers(key)
+        if err != nil {
+            return nil, 0, err
         }
     }
 
-    if f == nil {
-        return nil, 0, fmt.Errorf("file not found")
-    }
-
+decrypt:
     decryptedBuf := new(bytes.Buffer)
     decryptedBufSize, err := p2p.CopyDecrypt(fs.EncryptionKey, decryptedBuf, f, nil)
-    return decryptedBuf, int64(decryptedBufSize), err
+    if err != nil {
+        return nil, 0, err
+    }
+    return decryptedBuf, int64(decryptedBufSize), nil
 }
 
-func (fs *FileServer) Store(key string, r io.Reader) error{
-    // 1. Wrap the file reader in p2p.CopyEncrypt function
-    // 1. Store this encrypted file to disk
-    // 2. Broadcast this encrypted file to the peer network
-    
+func (fs *FileServer) Store(key string, r io.Reader) error {
     encryptedBuf := new(bytes.Buffer)
     p2p.CopyEncrypt(fs.EncryptionKey, encryptedBuf, r, nil)
 
     buf := new(bytes.Buffer)
     tee := io.TeeReader(encryptedBuf, buf)
 
-    size, err := fs.store.Write(key, tee); 
+    size, err := fs.store.Write(key, tee)
     if err != nil {
-        return err 
+        return err
     }
 
     msg := &Message{
         Payload: &MessageStoreFile{
             Key: key,
-            Size: size, 
+            Size: size,
         },
     }
-    
-    return fs.broadcast(msg, buf)
+
+    if err := fs.broadcast(msg, buf); err != nil {
+        log.Printf("broadcast error: %v", err)
+    }
+
+    keyNodeID := kademlia.NewNodeID([]byte(key))
+    advertisement := []byte(fs.TCPListenAddr)
+    if err := fs.dhtNode.Store(keyNodeID, advertisement); err != nil {
+        log.Printf("DHT store advertisement: %v", err)
+    }
+
+    return nil
 }
 
 func (fs *FileServer) OnPeer(peer p2p.Peer) error{
@@ -303,25 +389,57 @@ func (fs *FileServer) OnPeer(peer p2p.Peer) error{
 }
 
 func (fs *FileServer) Start() error{
-    if err := fs.Transport.ListenAndAccept(); err != nil {
+    if err := fs.dhtTransport.Listen(fs.DHTListenAddr); err != nil {
+        return fmt.Errorf("DHT listen: %w", err)
+    }
+    fs.dhtNode.Run()
+
+    if err := fs.tcpTransport.ListenAndAccept(); err != nil {
         return err
     }
 
-    if err := fs.bootstrapNetwork(); err != nil {
+    if err := fs.bootstrapDHT(); err != nil {
         log.Println(err)
     }
 
-    go fs.loop()    
+    if err := fs.bootstrapTCPNetwork(); err != nil {
+        log.Println(err)
+    }
+
+    go fs.loop()
+
+    return nil
+}
+
+func (fs *FileServer) bootstrapDHT() error {
+    if fs.DHTBootstrapAddr == "" {
+        return nil
+    }
+
+    addr, err := net.ResolveUDPAddr("udp", fs.DHTBootstrapAddr)
+    if err != nil {
+        return fmt.Errorf("resolve DHT bootstrap addr: %w", err)
+    }
+
+    bootstrapContact := kademlia.Contact{Addr: addr}
+    if err := fs.dhtNode.Bootstrap(bootstrapContact); err != nil {
+        return fmt.Errorf("DHT bootstrap: %w", err)
+    }
+
+    myID := fs.dhtNode.Self().ID
+    if err := fs.dhtNode.Store(myID, []byte(fs.TCPListenAddr)); err != nil {
+        log.Printf("DHT advertise self: %v", err)
+    }
 
     return nil
 }
 
 func (fs *FileServer) Stop() {
     close(fs.quitch)
+    fs.dhtNode.Stop()
 }
 
 func init() {
     gob.Register(&MessageGetFile{})
     gob.Register(&MessageStoreFile{})
 }
-
