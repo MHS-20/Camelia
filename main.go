@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chiragsoni81245/foreverstore/internal/node"
 )
 
 func main() {
@@ -17,10 +19,10 @@ func main() {
 	dhtBootstrap := env("DHT_BOOTSTRAP", "")
 	runTest, _ := strconv.ParseBool(env("RUN_TEST", "false"))
 
-	opts := FileServerOpts{
+	opts := node.FileServerOpts{
 		StorageRoot:       fmt.Sprintf("storage/%s_network", tcpAddr),
 		EncryptionKey:     []byte("rptreftgrtgfrefrdeswfrdefrdejtkg"),
-		PathTransformFunc: CASPathTransformFunc,
+		PathTransformFunc: node.CASPathTransformFunc,
 		TCPListenAddr:     tcpAddr,
 		DHTListenAddr:     dhtAddr,
 		DHTBootstrapAddr:  dhtBootstrap,
@@ -30,7 +32,7 @@ func main() {
 		opts.TCPBootstrapNodes = strings.Split(tcpBootstrap, ",")
 	}
 
-	fs := NewFileServer(opts)
+	fs := node.NewFileServer(opts)
 	if err := fs.Start(); err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +45,7 @@ func main() {
 	select {}
 }
 
-func runDemoTest(fs *FileServer) {
+func runDemoTest(fs *node.FileServer) {
 	key := "myprivatedata"
 
 	data := []byte("hello from foreverstore at " + time.Now().String())
@@ -64,7 +66,7 @@ func runDemoTest(fs *FileServer) {
 
 	time.Sleep(1 * time.Second)
 
-	fs.store.Delete(key)
+fs.Delete(key)
 	log.Printf("Deleted local copy of %q, retrieving from network...", key)
 
 	r, _, err := fs.Get(key)

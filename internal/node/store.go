@@ -1,4 +1,4 @@
-package main
+package node
 
 import (
 	"bytes"
@@ -50,7 +50,6 @@ func DefaultPathTranformFunc(key string) PathKey {
 }
 
 type StoreOpts struct {
-    // Root is the path of the folder which will contain all the files and directories of that store
     Root string
     PathTransformFunc PathTransformFunc 
 }
@@ -119,10 +118,6 @@ func (s *Store) Read(key string) (io.Reader, int64, error) {
         f.Close()
     }()
 
-    // To-Do 
-    // Here we are copying the whole file into a buffer
-    // which will not work well with big files so we need to 
-    // find a better way to do this
     buf := new(bytes.Buffer)
     _, err = io.Copy(buf, f)
     if err != nil {

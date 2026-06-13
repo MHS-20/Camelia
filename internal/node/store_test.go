@@ -1,4 +1,4 @@
-package main
+package node
 
 import (
 	"bytes"
@@ -73,4 +73,3 @@ func teardown(t *testing.T, s *Store) {
         t.Error(err)
     }
 }
-

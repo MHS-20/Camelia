@@ -1,4 +1,4 @@
-package main
+package node
 
 import (
 	"bytes"
@@ -50,6 +50,7 @@ type FileServer struct {
 
     store *Store
     quitch chan struct{}
+    stopOnce sync.Once
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
@@ -85,6 +86,10 @@ func NewFileServer(opts FileServerOpts) *FileServer {
     tcpTransport.OnPeer = fs.OnPeer
 
     return fs
+}
+
+func (fs *FileServer) Delete(key string) error {
+    return fs.store.Delete(key)
 }
 
 func addrPort(addr string) int {
@@ -435,8 +440,10 @@ func (fs *FileServer) bootstrapDHT() error {
 }
 
 func (fs *FileServer) Stop() {
-    close(fs.quitch)
-    fs.dhtNode.Stop()
+    fs.stopOnce.Do(func() {
+        close(fs.quitch)
+        fs.dhtNode.Stop()
+    })
 }
 
 func init() {
