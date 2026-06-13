@@ -1,3 +1,5 @@
+github.com/MHS-20/Kademlia v0.0.0-20260613094345-658290ba55ad h1:XR6Rrpf9EJo9cWB2Xg1h7OTJnmyFVDbMVgtlXxC/gXc=
+github.com/MHS-20/Kademlia v0.0.0-20260613094345-658290ba55ad/go.mod h1:q7G6ugMoCM5h4om0oV59+A44TQRFuVX6zAk2uxKHmpU=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
