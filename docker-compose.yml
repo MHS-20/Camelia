@@ -1,0 +1,43 @@
+services:
+  seed:
+    build: .
+    environment:
+      - TCP_ADDR=:4000
+      - DHT_ADDR=:9000
+    ports:
+      - "4000:4000"
+      - "9000:9000/udp"
+
+  node2:
+    build: .
+    depends_on:
+      seed:
+        condition: service_started
+    environment:
+      - TCP_ADDR=:4001
+      - DHT_ADDR=:9001
+      - TCP_BOOTSTRAP=seed:4000
+      - DHT_BOOTSTRAP=seed:9000
+
+  node3:
+    build: .
+    depends_on:
+      seed:
+        condition: service_started
+    environment:
+      - TCP_ADDR=:4002
+      - DHT_ADDR=:9002
+      - TCP_BOOTSTRAP=seed:4000
+      - DHT_BOOTSTRAP=seed:9000
+
+  test:
+    build: .
+    depends_on:
+      seed:
+        condition: service_started
+    environment:
+      - TCP_ADDR=:4003
+      - DHT_ADDR=:9003
+      - TCP_BOOTSTRAP=seed:4000
+      - DHT_BOOTSTRAP=seed:9000
+      - RUN_TEST=true

@@ -5,62 +5,88 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
-func main(){
-    fs1 := makeserver(":4000", ":9000")
-    fs1.Start()
+func main() {
+	tcpAddr := env("TCP_ADDR", ":4000")
+	dhtAddr := env("DHT_ADDR", ":9000")
+	tcpBootstrap := env("TCP_BOOTSTRAP", "")
+	dhtBootstrap := env("DHT_BOOTSTRAP", "")
+	runTest, _ := strconv.ParseBool(env("RUN_TEST", "false"))
 
-    time.Sleep(1*time.Second)
+	opts := FileServerOpts{
+		StorageRoot:       fmt.Sprintf("storage/%s_network", tcpAddr),
+		EncryptionKey:     []byte("rptreftgrtgfrefrdeswfrdefrdejtkg"),
+		PathTransformFunc: CASPathTransformFunc,
+		TCPListenAddr:     tcpAddr,
+		DHTListenAddr:     dhtAddr,
+		DHTBootstrapAddr:  dhtBootstrap,
+	}
 
-    fs2Opts := FileServerOpts{
-        StorageRoot: fmt.Sprintf("storage/%s_network", ":5000"),
-        EncryptionKey: []byte("rptreftgrtgfrefrdeswfrdefrdejtkg"),
-        PathTransformFunc: CASPathTransformFunc,
-        TCPListenAddr: ":5000",
-        DHTListenAddr: ":9001",
-        TCPBootstrapNodes: []string{":4000"},
-        DHTBootstrapAddr: ":9000",
-    }
-    fs2 := NewFileServer(fs2Opts)
-    fs2.Start()
-    time.Sleep(1*time.Second)
+	if tcpBootstrap != "" {
+		opts.TCPBootstrapNodes = strings.Split(tcpBootstrap, ",")
+	}
 
-    key := "myprivatedata"
-    f, err := os.Open("test_file")
-    if err := fs2.Store(key, f); err != nil {
-        log.Fatal(err)
-    }
-    f.Close()
+	fs := NewFileServer(opts)
+	if err := fs.Start(); err != nil {
+		log.Fatal(err)
+	}
 
-    time.Sleep(1*time.Second)
-    fs2.store.Delete(key)
+	if runTest {
+		time.Sleep(2 * time.Second)
+		runDemoTest(fs)
+	}
 
-    r, _, err := fs2.Get(key)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    f, err = os.Create("output_file")
-    n, err := io.Copy(f, r)
-    if err != nil {
-        log.Fatal(err)
-    }
-    f.Close()
-
-    log.Printf("Received %d bytes", n)
-
-    select {}
+	select {}
 }
 
-func makeserver(tcpAddr, dhtAddr string) *FileServer {
-    opts := FileServerOpts{
-        StorageRoot: fmt.Sprintf("storage/%s_network", tcpAddr),
-        EncryptionKey: []byte("rptreftgrtgfrefrdeswfrdefrdejtkg"),
-        PathTransformFunc: CASPathTransformFunc,
-        TCPListenAddr: tcpAddr,
-        DHTListenAddr: dhtAddr,
-    }
-    return NewFileServer(opts)
+func runDemoTest(fs *FileServer) {
+	key := "myprivatedata"
+
+	data := []byte("hello from foreverstore at " + time.Now().String())
+	tmpFile, err := os.CreateTemp("", "foreverstore-*")
+	if err != nil {
+		log.Fatalf("create temp file: %v", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		log.Fatalf("write temp file: %v", err)
+	}
+	tmpFile.Seek(0, 0)
+
+	log.Printf("Storing %d bytes under key %q", len(data), key)
+	if err := fs.Store(key, tmpFile); err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	tmpFile.Close()
+
+	time.Sleep(1 * time.Second)
+
+	fs.store.Delete(key)
+	log.Printf("Deleted local copy of %q, retrieving from network...", key)
+
+	r, _, err := fs.Get(key)
+	if err != nil {
+		log.Fatalf("get: %v", err)
+	}
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		log.Fatalf("read: %v", err)
+	}
+
+	if string(out) != string(data) {
+		log.Fatalf("data mismatch: got %q, want %q", string(out), string(data))
+	}
+
+	log.Printf("Test PASSED: retrieved %d bytes, content matches", len(out))
+}
+
+func env(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

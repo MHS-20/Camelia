@@ -1,0 +1,5 @@
+bin/
+storage/
+AGENTS.md
+.git
+*.md
