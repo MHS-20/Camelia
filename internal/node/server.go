@@ -221,21 +221,40 @@ func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetF
 }
 
 func (fs *FileServer) broadcast(msg *Message, r io.Reader) error {
-    buf := new(bytes.Buffer)
-    if err := gob.NewEncoder(buf).Encode(msg); err != nil {
+    msgBuf := new(bytes.Buffer)
+    if err := gob.NewEncoder(msgBuf).Encode(msg); err != nil {
         return err
     }
-    for _, peer := range fs.peers {
-        err := peer.Send(p2p.IncomingMessage, buf, int64(buf.Len()))
-        if err != nil {
-            log.Printf("error in sending message to peer %s", peer.RemoteAddr().String())
-        }
 
-        switch payload := msg.Payload.(type) {
-        case *MessageStoreFile:
-            peer.Send(p2p.IncomingStream, r, payload.Size)
+    var streamData []byte
+    if r != nil {
+        var err error
+        streamData, err = io.ReadAll(r)
+        if err != nil {
+            return err
         }
     }
+
+    var wg sync.WaitGroup
+    for _, peer := range fs.peers {
+        wg.Add(1)
+        go func(peer p2p.Peer) {
+            defer wg.Done()
+            if err := peer.Send(p2p.IncomingMessage, bytes.NewReader(msgBuf.Bytes()), int64(msgBuf.Len())); err != nil {
+                log.Printf("error in sending message to peer %s: %v", peer.RemoteAddr().String(), err)
+                return
+            }
+            switch msg.Payload.(type) {
+            case *MessageStoreFile:
+                if len(streamData) > 0 {
+                    if err := peer.Send(p2p.IncomingStream, bytes.NewReader(streamData), int64(len(streamData))); err != nil {
+                        log.Printf("error in sending stream to peer %s: %v", peer.RemoteAddr().String(), err)
+                    }
+                }
+            }
+        }(peer)
+    }
+    wg.Wait()
     return nil
 }
 
