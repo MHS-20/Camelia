@@ -8,10 +8,17 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
 const streamTimeout = 30 * time.Second
+
+var bufPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
 
 // TCPPeer represent the remote node over a TCP established connection
 type TCPPeer struct {
@@ -62,7 +69,10 @@ func (peer *TCPPeer) Send(t byte, r io.Reader, size int64) error {
 }
 
 func (peer *TCPPeer) Write(b []byte) (n int, err error) {
-    cb := new(bytes.Buffer)
+    cb := bufPool.Get().(*bytes.Buffer)
+    cb.Reset()
+    defer bufPool.Put(cb)
+
     n, err = CopyEncrypt(peer.secretKey, cb, bytes.NewReader(b), peer.iv)
     if(err != nil) {
         return 0, err
@@ -77,7 +87,10 @@ func (peer *TCPPeer) Write(b []byte) (n int, err error) {
 }
 
 func (peer *TCPPeer) Read(b []byte) (n int, err error) {
-    buf := new(bytes.Buffer) 
+    buf := bufPool.Get().(*bytes.Buffer)
+    buf.Reset()
+    defer bufPool.Put(buf)
+
     cb := make([]byte, cap(b)) 
 
     n, err = peer.Conn.Read(cb)
