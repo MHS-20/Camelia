@@ -24,7 +24,10 @@ func (dec *DefaultDecoder) Decode(r io.Reader, rpc *RPC) error{
         log.Println(err)
         return err
     }
-    incomingDataType = incomingDataTypeBytes[:n][0]
+    if n == 0 {
+        return fmt.Errorf("read 0 bytes for incoming data type")
+    }
+    incomingDataType = incomingDataTypeBytes[0]
     if incomingDataType==IncomingStream {
         rpc.Stream = true
         return nil 
