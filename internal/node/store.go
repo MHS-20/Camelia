@@ -134,16 +134,29 @@ func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
     }
 
     filepath := s.getAbsolutePath(pathKey.GetFilePath())
-    f, err := os.Create(filepath)
+    tmpFile, err := os.CreateTemp(s.getAbsolutePath(pathKey.Path), "tmp-*")
     if err != nil {
+        return 0, err
+    }
+    tmpPath := tmpFile.Name()
+
+    n, err := io.Copy(tmpFile, r)
+    if err != nil {
+        tmpFile.Close()
+        os.Remove(tmpPath)
         return 0, err
     }
 
-    n, err := io.Copy(f, r)
-    if err != nil {
+    if err := tmpFile.Close(); err != nil {
+        os.Remove(tmpPath)
         return 0, err
     }
-    
+
+    if err := os.Rename(tmpPath, filepath); err != nil {
+        os.Remove(tmpPath)
+        return 0, err
+    }
+
     log.Printf("written (%d) bytes to disk: %s", n, filepath)
 
     return n, nil
