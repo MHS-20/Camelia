@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,4 +135,68 @@ func TestIntegrationNodeFailureResilience(t *testing.T) {
 	got, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.Equal(t, data, got)
+}
+
+func TestLocalRangeRetrieval(t *testing.T) {
+	seedTCP := mustFreePort(t)
+	seedDHT := mustFreePort(t)
+
+	seed := startNode(t, seedTCP, seedDHT, "", nil)
+	defer seed.Stop()
+
+	data := []byte("hello range test data")
+	require.NoError(t, seed.Store("rangetest", bytes.NewReader(data)))
+
+	r, n, err := seed.GetRange("rangetest", 6, 5)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), n)
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, []byte("range"), got)
+}
+
+func TestIntegrationStats(t *testing.T) {
+	seedTCP := mustFreePort(t)
+	seedDHT := mustFreePort(t)
+
+	seed := startNode(t, seedTCP, seedDHT, "", nil)
+	defer seed.Stop()
+
+	stats := seed.Stats()
+	require.Equal(t, 0, stats.PeerCount)
+	require.GreaterOrEqual(t, stats.StorageUsedBytes, int64(0))
+}
+
+func TestIntegrationConcurrentStoreAndRetrieve(t *testing.T) {
+	seedTCP := mustFreePort(t)
+	seedDHT := mustFreePort(t)
+	nodeTCP := mustFreePort(t)
+	nodeDHT := mustFreePort(t)
+
+	seed := startNode(t, seedTCP, seedDHT, "", nil)
+	defer seed.Stop()
+
+	node := startNode(t, nodeTCP, nodeDHT, fmt.Sprintf(":%d", seedDHT),
+		[]string{fmt.Sprintf(":%d", seedTCP)})
+	defer node.Stop()
+
+	time.Sleep(2 * time.Second)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := fmt.Sprintf("concurrent_%d", i)
+			data := []byte(fmt.Sprintf("concurrent data %d", i))
+			require.NoError(t, node.Store(key, bytes.NewReader(data)))
+			node.Delete(key)
+			r, _, err := seed.Get(key)
+			if err == nil {
+				got, _ := io.ReadAll(r)
+				require.Equal(t, data, got)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
