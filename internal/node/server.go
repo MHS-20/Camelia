@@ -459,7 +459,7 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
 
 decrypt:
 	decryptedBuf := new(bytes.Buffer)
-	decryptedBufSize, err := p2p.CopyDecrypt(fs.EncryptionKey, decryptedBuf, f, nil)
+	decryptedBufSize, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, f)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -474,7 +474,7 @@ func (fs *FileServer) Store(key string, r io.Reader) error {
         return err
     }
     encryptedBuf := new(bytes.Buffer)
-    p2p.CopyEncrypt(fs.EncryptionKey, encryptedBuf, r, nil)
+    p2p.CopyEncryptHMAC(fs.EncryptionKey, encryptedBuf, r)
 
     buf := new(bytes.Buffer)
     tee := io.TeeReader(encryptedBuf, buf)

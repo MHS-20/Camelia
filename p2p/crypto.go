@@ -1,9 +1,13 @@
 package p2p
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -110,4 +114,47 @@ func CopyEncrypt(key []byte, dst io.Writer, src io.Reader, iv []byte) (int, erro
     }
 
     return totalBytesWrote, nil 
+}
+
+func CopyEncryptHMAC(key []byte, dst io.Writer, src io.Reader) (int, error) {
+	encBuf := new(bytes.Buffer)
+	n, err := CopyEncrypt(key, encBuf, src, nil)
+	if err != nil {
+		return 0, err
+	}
+	encrypted := encBuf.Bytes()
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write(encrypted)
+	signature := mac.Sum(nil)
+
+	if _, err := dst.Write(signature); err != nil {
+		return 0, err
+	}
+	if _, err := dst.Write(encrypted); err != nil {
+		return 0, err
+	}
+	return n + sha256.Size, nil
+}
+
+func CopyDecryptHMAC(key []byte, dst io.Writer, src io.Reader) (int, error) {
+	signature := make([]byte, sha256.Size)
+	if _, err := io.ReadFull(src, signature); err != nil {
+		return 0, fmt.Errorf("failed to read HMAC: %w", err)
+	}
+
+	encrypted, err := io.ReadAll(src)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read encrypted data: %w", err)
+	}
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write(encrypted)
+	expected := mac.Sum(nil)
+
+	if !hmac.Equal(signature, expected) {
+		return 0, fmt.Errorf("HMAC mismatch: data integrity check failed")
+	}
+
+	return CopyDecrypt(key, dst, bytes.NewReader(encrypted), nil)
 }
