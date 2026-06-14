@@ -21,9 +21,17 @@ func main() {
 	dhtBootstrap := env("DHT_BOOTSTRAP", "")
 	runTest, _ := strconv.ParseBool(env("RUN_TEST", "false"))
 
+	encryptionKey := env("ENCRYPTION_KEY", "rptreftgrtgfrefrdeswfrdefrdejtkg")
+	if encryptionKey == "" {
+		log.Fatal("ENCRYPTION_KEY must be set to a 32-byte AES key")
+	}
+	if len(encryptionKey) != 32 {
+		log.Fatalf("ENCRYPTION_KEY must be exactly 32 bytes, got %d", len(encryptionKey))
+	}
+
 	opts := node.FileServerOpts{
 		StorageRoot:       fmt.Sprintf("storage/%s_network", tcpAddr),
-		EncryptionKey:     []byte("rptreftgrtgfrefrdeswfrdefrdejtkg"),
+		EncryptionKey:     []byte(encryptionKey),
 		PathTransformFunc: node.CASPathTransformFunc,
 		TCPListenAddr:     tcpAddr,
 		DHTListenAddr:     dhtAddr,
