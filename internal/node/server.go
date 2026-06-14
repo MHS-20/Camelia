@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -117,6 +119,8 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 }
 
 const maxKeyLength = 1024
+
+const peerCacheFile = "known_peers.json"
 
 func validateKey(key string) error {
     if key == "" {
@@ -639,6 +643,53 @@ func (fs *FileServer) OnPeer(peer p2p.Peer) error{
     return nil
 }
 
+func (fs *FileServer) saveCachedPeers() {
+	fs.peerLock.Lock()
+	addrs := make([]string, 0, len(fs.peers))
+	for addr := range fs.peers {
+		addrs = append(addrs, addr)
+	}
+	fs.peerLock.Unlock()
+
+	data, err := json.Marshal(addrs)
+	if err != nil {
+		log.Printf("failed to marshal peer cache: %v", err)
+		return
+	}
+
+	cachePath := fs.StorageRoot + "/" + peerCacheFile
+	if err := os.MkdirAll(fs.StorageRoot, 0700); err != nil {
+		log.Printf("failed to create storage root for peer cache: %v", err)
+		return
+	}
+	if err := os.WriteFile(cachePath, data, 0600); err != nil {
+		log.Printf("failed to write peer cache: %v", err)
+	}
+}
+
+func (fs *FileServer) loadCachedPeers() {
+	cachePath := fs.StorageRoot + "/" + peerCacheFile
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("failed to read peer cache: %v", err)
+		}
+		return
+	}
+
+	var addrs []string
+	if err := json.Unmarshal(data, &addrs); err != nil {
+		log.Printf("failed to unmarshal peer cache: %v", err)
+		return
+	}
+
+	for _, addr := range addrs {
+		if err := fs.dialPeer(addr); err != nil {
+			log.Printf("reconnect to cached peer %s: %v", addr, err)
+		}
+	}
+}
+
 func (fs *FileServer) Start() error{
     if err := fs.dhtTransport.Listen(fs.DHTListenAddr); err != nil {
         return fmt.Errorf("DHT listen: %w", err)
@@ -648,6 +699,8 @@ func (fs *FileServer) Start() error{
     if err := fs.tcpTransport.ListenAndAccept(); err != nil {
         return err
     }
+
+    fs.loadCachedPeers()
 
     if err := fs.bootstrapDHT(); err != nil {
         log.Println(err)
@@ -687,6 +740,7 @@ func (fs *FileServer) bootstrapDHT() error {
 
 func (fs *FileServer) Stop() {
     fs.stopOnce.Do(func() {
+        fs.saveCachedPeers()
         close(fs.quitch)
         fs.dhtNode.Stop()
     })
