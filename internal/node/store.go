@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 )
 
 type PathKey struct {
@@ -55,6 +56,7 @@ type StoreOpts struct {
 
 type Store struct {
     StoreOpts
+    mu sync.Mutex
 }
 
 func NewStore(opts StoreOpts) *Store {
@@ -71,6 +73,8 @@ func (s *Store) getAbsolutePath(path string) string {
 }
 
 func (s *Store) Clear() error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
     return os.RemoveAll(s.Root)
 }
 
@@ -81,6 +85,9 @@ func (s *Store) Has(key string) bool {
 }
 
 func (s *Store) Delete(key string) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
     pathKey := s.PathTransformFunc(key)
     defer func(){
         log.Printf("deleted [%s] from disk", s.getAbsolutePath(pathKey.GetFilePath()))
@@ -127,6 +134,9 @@ func (s *Store) Write(key string, r io.Reader) (size int64, err error) {
 }
 
 func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
     pathKey := s.PathTransformFunc(key) 
 
     if err := os.MkdirAll(s.getAbsolutePath(pathKey.Path), os.ModePerm); err != nil {
