@@ -327,10 +327,13 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
         if len(closest) > 0 {
             log.Printf("trying %d closest DHT nodes", len(closest))
             for _, c := range closest {
-                tcpAddr := net.JoinHostPort(
-                    c.Addr.IP.String(),
-                    fmt.Sprintf("%d", c.Addr.Port-5000),
-                )
+                nodeID := kademlia.NewNodeID([]byte(c.ID.String()))
+                val, _, err := fs.dhtNode.FindValue(nodeID)
+                if err != nil || val == nil {
+                    log.Printf("no TCP address advertised for node %s", c.ID)
+                    continue
+                }
+                tcpAddr := string(val)
                 if tcpAddr == fs.TCPListenAddr {
                     continue
                 }
