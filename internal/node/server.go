@@ -270,43 +270,76 @@ func (fs *FileServer) queryTCPPeers(key string) (io.ReadCloser, int64, error) {
     }
 
     fs.peerLock.Lock()
-    defer fs.peerLock.Unlock()
-
+    peers := make([]p2p.Peer, 0, len(fs.peers))
     for _, peer := range fs.peers {
-        err := peer.Send(p2p.IncomingMessage, getFileMsgBuf, int64(getFileMsgBuf.Len()))
-        if err != nil {
-            log.Printf("error sending to peer %s: %v", peer.RemoteAddr().String(), err)
-            continue
-        }
+        peers = append(peers, peer)
+    }
+    fs.peerLock.Unlock()
 
-        var fileSize int64
-        err = binary.Read(peer, binary.LittleEndian, &fileSize)
-        if err != nil {
-            log.Printf("error reading file size from peer %s: %v", peer.RemoteAddr().String(), err)
-            continue
-        }
-
-		if fileSize == 0 {
-			log.Printf("file does not exist on peer %s", peer.RemoteAddr().String())
-			peer.ConsumeStreamStart()
-			peer.CloseStream()
-			continue
-		}
-
-        _, err = fs.store.Write(key, peer.ReadStream(fileSize))
-        if err != nil {
-            return nil, 0, err
-        }
-        peer.CloseStream()
-
-        f, size, err := fs.store.Read(key)
-        if err != nil {
-            return nil, 0, err
-        }
-        return f, size, nil
+    if len(peers) == 0 {
+        return nil, 0, fmt.Errorf("no peers to query")
     }
 
-    return nil, 0, fmt.Errorf("file not found on any TCP peer")
+    type queryResult struct {
+        r    io.ReadCloser
+        size int64
+        err  error
+    }
+
+    resultCh := make(chan queryResult, len(peers))
+    var wg sync.WaitGroup
+
+    msgBytes := getFileMsgBuf.Bytes()
+
+    for _, peer := range peers {
+        wg.Add(1)
+        go func(peer p2p.Peer) {
+            defer wg.Done()
+
+            if err := peer.Send(p2p.IncomingMessage, bytes.NewReader(msgBytes), int64(len(msgBytes))); err != nil {
+                return
+            }
+
+            var fileSize int64
+            if err := binary.Read(peer, binary.LittleEndian, &fileSize); err != nil {
+                return
+            }
+
+            if fileSize == 0 {
+                peer.ConsumeStreamStart()
+                peer.CloseStream()
+                return
+            }
+
+            if _, err := fs.store.Write(key, peer.ReadStream(fileSize)); err != nil {
+                return
+            }
+            peer.CloseStream()
+
+            f, size, err := fs.store.Read(key)
+            resultCh <- queryResult{f, size, err}
+        }(peer)
+    }
+
+    go func() {
+        wg.Wait()
+        close(resultCh)
+    }()
+
+    var firstErr error
+    for res := range resultCh {
+        if res.err == nil {
+            return res.r, res.size, nil
+        }
+        if firstErr == nil {
+            firstErr = res.err
+        }
+    }
+
+    if firstErr == nil {
+        firstErr = fmt.Errorf("file not found on any TCP peer")
+    }
+    return nil, 0, firstErr
 }
 
 func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
