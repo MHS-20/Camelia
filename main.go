@@ -5,8 +5,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chiragsoni81245/foreverstore/internal/node"
@@ -40,9 +42,15 @@ func main() {
 	if runTest {
 		time.Sleep(2 * time.Second)
 		runDemoTest(fs)
+		fs.Stop()
+		return
 	}
 
-	select {}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Printf("received signal %v, shutting down", sig)
+	fs.Stop()
 }
 
 func runDemoTest(fs *node.FileServer) {
