@@ -47,6 +47,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	httpAddr := env("HTTP_ADDR", "")
+	if httpAddr != "" {
+		srv := node.NewHTTPServer(fs, httpAddr)
+		if err := srv.Start(); err != nil {
+			log.Fatal(err)
+		}
+		defer srv.Stop()
+	}
+
 	if runTest {
 		time.Sleep(2 * time.Second)
 		runDemoTest(fs)
