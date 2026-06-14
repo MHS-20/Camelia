@@ -257,11 +257,12 @@ func (fs *FileServer) queryTCPPeers(key string) (io.ReadCloser, int64, error) {
             continue
         }
 
-        if fileSize == 0 {
-            log.Printf("file does not exist on peer %s", peer.RemoteAddr().String())
-            peer.CloseStream()
-            continue
-        }
+		if fileSize == 0 {
+			log.Printf("file does not exist on peer %s", peer.RemoteAddr().String())
+			peer.ConsumeStreamStart()
+			peer.CloseStream()
+			continue
+		}
 
         _, err = fs.store.Write(key, peer.ReadStream(fileSize))
         if err != nil {

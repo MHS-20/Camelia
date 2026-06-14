@@ -8,14 +8,19 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
+
+const streamTimeout = 30 * time.Second
 
 // TCPPeer represent the remote node over a TCP established connection
 type TCPPeer struct {
     net.Conn
 
-    // streamTriggerCh is to send the events when a stream start and stops
-    streamTriggerCh chan struct{}
+    // streamStartCh is used by the read loop to signal the start of a stream
+    streamStartCh chan struct{}
+    // streamDoneCh is used by the consumer to signal the end of a stream
+    streamDoneCh chan struct{}
 
     // secretKey will be the key to used in encryption and decryption of traffic 
     iv []byte
@@ -92,22 +97,38 @@ func (peer *TCPPeer) Read(b []byte) (n int, err error) {
 // ReadStream function implements Peer interface
 // it will be used when user want to use a specific size of stream
 func (peer *TCPPeer) ReadStream(size int64) io.Reader {
-    <- peer.streamTriggerCh
-    return io.LimitReader(peer, size) 
+	select {
+	case <-peer.streamStartCh:
+	case <-time.After(streamTimeout):
+	}
+	return io.LimitReader(peer, size)
 }
 
 // CloseStream function implements Peer interface
 // it is used to continue the read loop of messages after reading the stream of previous message from peer connection reader
 func (peer *TCPPeer) CloseStream() {
-    peer.streamTriggerCh <- struct{}{} 
+	select {
+	case peer.streamDoneCh <- struct{}{}:
+	case <-time.After(streamTimeout):
+	}
+}
+
+// ConsumeStreamStart reads and discards a pending stream start signal
+// without reading any data. Used when a peer indicates no data follows.
+func (peer *TCPPeer) ConsumeStreamStart() {
+	select {
+	case <-peer.streamStartCh:
+	case <-time.After(streamTimeout):
+	}
 }
 
 func NewTCPPeer(conn net.Conn, outboud bool) *TCPPeer {
-    return &TCPPeer{
-        Conn: conn,
-        outbound: outboud,
-        streamTriggerCh: make(chan struct{}),
-    }
+	return &TCPPeer{
+		Conn: conn,
+		outbound: outboud,
+		streamStartCh: make(chan struct{}),
+		streamDoneCh: make(chan struct{}),
+	}
 }
 
 type TCPTransportOpts struct {
@@ -223,11 +244,21 @@ func (t *TCPTrasport) handleConn(conn net.Conn, outbound bool) {
 
         rpc.From = conn.RemoteAddr().String()
 
-        if rpc.Stream {
-            peer.streamTriggerCh <- struct{}{} // Send the trigger which will result in stream start
-            <- peer.streamTriggerCh // Wait for the trigger which will result in stream stop
-            continue
-        }
+		if rpc.Stream {
+			select {
+			case peer.streamStartCh <- struct{}{}:
+			case <-time.After(streamTimeout):
+				err = fmt.Errorf("timeout sending stream start signal")
+				return
+			}
+			select {
+			case <-peer.streamDoneCh:
+			case <-time.After(streamTimeout):
+				err = fmt.Errorf("timeout waiting for stream end signal")
+				return
+			}
+			continue
+		}
 
         t.rpcch <- rpc 
     }

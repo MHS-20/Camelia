@@ -11,6 +11,7 @@ type Peer interface {
     Send(t byte, r io.Reader, size int64) error
     CloseStream()
     ReadStream(size int64) io.Reader
+    ConsumeStreamStart()
 }
 
 // Transport is anything that handles the communication
