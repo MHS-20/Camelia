@@ -122,27 +122,27 @@ func (fs *FileServer) bootstrapTCPNetwork() error {
 }
 
 func (fs *FileServer) loop() {
-    defer func(){
-        log.Printf("file server stopped due to user quit action")
-        if err := fs.tcpTransport.Close(); err != nil {
-            log.Fatal(err)
-        }
-    }()
-    for {
-        select {
-        case rpc := <-fs.tcpTransport.Consume():
-            var msg Message;
-            if err := gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&msg); err != nil {
-                log.Fatal(err)
-            }
+	defer func(){
+		log.Printf("file server stopped due to user quit action")
+		fs.tcpTransport.Close()
+	}()
+	for {
+		select {
+		case rpc := <-fs.tcpTransport.Consume():
+			var msg Message;
+			if err := gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&msg); err != nil {
+				log.Printf("failed to decode message from %s: %v", rpc.From, err)
+				continue
+			}
 
-            if err := fs.handleMessage(&rpc, &msg); err != nil {
-                log.Fatal(err)
-            }
-        case <-fs.quitch:
-            return
-        }
-    }
+			if err := fs.handleMessage(&rpc, &msg); err != nil {
+				log.Printf("failed to handle message from %s: %v", rpc.From, err)
+				continue
+			}
+		case <-fs.quitch:
+			return
+		}
+	}
 }
 
 func (fs *FileServer) handleMessage(rpc *p2p.RPC, msg *Message) error {
