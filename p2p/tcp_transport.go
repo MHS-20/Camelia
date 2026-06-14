@@ -277,6 +277,9 @@ func (t *TCPTransport) readLoop(peer *TCPPeer, conn net.Conn) {
 	for {
 		rpc := RPC{}
 		if err := t.Decoder.Decode(peer, &rpc); err != nil {
+			if ne := net.Error(nil); errors.As(err, &ne) && (ne.Timeout() || ne.Temporary()) {
+				continue
+			}
 			return
 		}
 
