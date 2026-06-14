@@ -129,6 +129,44 @@ func (s *Store) Read(key string) (io.ReadCloser, int64, error) {
 	return f, fi.Size(), nil
 }
 
+type limitedReadCloser struct {
+	io.Reader
+	file *os.File
+}
+
+func (lrc *limitedReadCloser) Close() error {
+	return lrc.file.Close()
+}
+
+func (s *Store) ReadRange(key string, offset, length int64) (io.ReadCloser, int64, error) {
+	pathKey := s.PathTransformFunc(key)
+	filepath := s.getAbsolutePath(pathKey.GetFilePath())
+	f, err := os.Open(filepath)
+	if err != nil {
+		return nil, 0, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	if offset >= fi.Size() {
+		f.Close()
+		return nil, 0, fmt.Errorf("offset %d exceeds file size %d", offset, fi.Size())
+	}
+	if length <= 0 || offset+length > fi.Size() {
+		length = fi.Size() - offset
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return &limitedReadCloser{
+		Reader: io.LimitReader(f, length),
+		file:   f,
+	}, length, nil
+}
+
 func (s *Store) Write(key string, r io.Reader) (size int64, err error) {
 	return s.writeStream(key, r)
 }

@@ -23,6 +23,12 @@ type MessageGetFile struct {
     Key string
 }
 
+type MessageGetFileRange struct {
+    Key    string
+    Offset int64
+    Length int64
+}
+
 type MessageStoreFile struct {
     Key string
     Size int64
@@ -206,6 +212,8 @@ func (fs *FileServer) handleMessage(rpc *p2p.RPC, msg *Message) error {
         return fs.handleStoreFileMessage(rpc, payload)
     case *MessageGetFile:
         return fs.handleGetFileMessage(rpc, payload)
+    case *MessageGetFileRange:
+        return fs.handleGetFileRangeMessage(rpc, payload)
     }
     return nil
 }
@@ -225,6 +233,45 @@ func (fs *FileServer) handleStoreFileMessage(rpc *p2p.RPC, msgPayload *MessageSt
     peer.CloseStream()
 
     return nil
+}
+
+func (fs *FileServer) handleGetFileRangeMessage(rpc *p2p.RPC, msgPayload *MessageGetFileRange) error {
+	log.Printf("get range message received: %+v\n", msgPayload)
+
+	var (
+		r    io.ReadCloser
+		size int64
+		err  error
+	)
+
+	if !fs.store.Has(msgPayload.Key) {
+		log.Printf("file requested via peer %s not found", rpc.From)
+	} else {
+		r, size, err = fs.store.ReadRange(msgPayload.Key, msgPayload.Offset, msgPayload.Length)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+	}
+
+	peer, err := fs.getPeer(rpc.From)
+	if err != nil {
+		return err
+	}
+
+	if err := peer.Send(p2p.IncomingStream, nil, 0); err != nil {
+		return err
+	}
+
+	if err := binary.Write(peer, binary.LittleEndian, size); err != nil {
+		return err
+	}
+
+	if size != 0 && r != nil {
+		_, err = io.Copy(peer, r)
+	}
+
+	return err
 }
 
 func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetFile) error {
@@ -477,6 +524,77 @@ func (fs *FileServer) Get(key string) (io.Reader, int64, error) {
     return fs.decryptFromReader(r)
 }
 
+func (fs *FileServer) GetRange(key string, offset, length int64) (io.Reader, int64, error) {
+	if err := validateKey(key); err != nil {
+		return nil, 0, err
+	}
+
+	if fs.store.Has(key) {
+		r, size, err := fs.store.ReadRange(key, offset, length)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer r.Close()
+		scope := size
+		if length > 0 && length < scope {
+			scope = length
+		}
+		decryptedBuf := new(bytes.Buffer)
+		if _, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, r); err != nil {
+			return nil, 0, err
+		}
+		return decryptedBuf, scope, nil
+	}
+
+	fs.peerLock.Lock()
+	peerList := make([]p2p.Peer, 0, len(fs.peers))
+	for _, p := range fs.peers {
+		peerList = append(peerList, p)
+	}
+	fs.peerLock.Unlock()
+
+	for _, peer := range peerList {
+		rangeMsg := &Message{
+			Payload: &MessageGetFileRange{
+				Key:    key,
+				Offset: offset,
+				Length: length,
+			},
+		}
+		msgBuf := new(bytes.Buffer)
+		if err := gob.NewEncoder(msgBuf).Encode(rangeMsg); err != nil {
+			continue
+		}
+
+		if err := peer.Send(p2p.IncomingMessage, msgBuf, int64(msgBuf.Len())); err != nil {
+			continue
+		}
+
+		var fileSize int64
+		if err := binary.Read(peer, binary.LittleEndian, &fileSize); err != nil {
+			continue
+		}
+
+		if fileSize == 0 {
+			peer.ConsumeStreamStart()
+			peer.CloseStream()
+			continue
+		}
+
+		peerData := peer.ReadStream(fileSize)
+		decryptedBuf := new(bytes.Buffer)
+		if _, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, peerData); err != nil {
+			log.Printf("integrity check failed for range from peer %s: %v", peer.RemoteAddr(), err)
+			peer.CloseStream()
+			continue
+		}
+		peer.CloseStream()
+		return decryptedBuf, fileSize, nil
+	}
+
+	return nil, 0, fmt.Errorf("file range not found on any peer")
+}
+
 func (fs *FileServer) Store(key string, r io.Reader) error {
     if err := validateKey(key); err != nil {
         return err
@@ -576,5 +694,6 @@ func (fs *FileServer) Stop() {
 
 func init() {
     gob.Register(&MessageGetFile{})
+    gob.Register(&MessageGetFileRange{})
     gob.Register(&MessageStoreFile{})
 }
