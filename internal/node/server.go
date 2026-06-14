@@ -50,6 +50,8 @@ type FileServer struct {
     store *Store
     quitch chan struct{}
     stopOnce sync.Once
+
+    tofuStore *TofuStore
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
@@ -58,9 +60,26 @@ func NewFileServer(opts FileServerOpts) *FileServer {
         PathTransformFunc: opts.PathTransformFunc,
     }
 
+    tofuStore, err := NewTofuStore(opts.StorageRoot)
+    if err != nil {
+        log.Printf("failed to initialise TOFU store: %v", err)
+    }
+
     tcpOpts := p2p.TCPTransportOpts{
         ListenAddr: opts.TCPListenAddr,
-        HandshakeFunc: p2p.DiffieHellmanHandshake,
+        HandshakeFunc: func(conn net.Conn) ([]byte, []byte, []byte, []byte, error) {
+            secretKey, iv, peerIV, peerPublicKey, err := p2p.DiffieHellmanHandshake(conn)
+            if err != nil {
+                return nil, nil, nil, nil, err
+            }
+            if tofuStore != nil {
+                peerID := conn.RemoteAddr().String()
+                if err := tofuStore.CheckOrPin(peerID, peerPublicKey); err != nil {
+                    return nil, nil, nil, nil, err
+                }
+            }
+            return secretKey, iv, peerIV, peerPublicKey, nil
+        },
         Decoder: &p2p.DefaultDecoder{},
     }
     tcpTransport := p2p.NewTCPTransport(tcpOpts)
@@ -81,6 +100,7 @@ func NewFileServer(opts FileServerOpts) *FileServer {
         dhtTransport: dhtTrans,
         quitch: make(chan struct{}),
         peers: make(map[string]p2p.Peer),
+        tofuStore: tofuStore,
     }
     tcpTransport.OnPeer = fs.OnPeer
 

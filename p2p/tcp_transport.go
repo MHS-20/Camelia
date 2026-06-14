@@ -33,6 +33,7 @@ type TCPPeer struct {
     iv []byte
     peerIV []byte
     secretKey []byte
+    peerPublicKey []byte
 
     // if we initiate the connection ==> outbound == false
     // if we accept and retrieve a connection ==> outbound == true
@@ -264,13 +265,14 @@ func (t *TCPTransport) startAcceptConnLoop() {
 func (t *TCPTransport) initPeer(conn net.Conn, outbound bool) (*TCPPeer, error) {
 	peer := NewTCPPeer(conn, outbound)
 
-	secretKey, iv, peerIV, err := t.HandshakeFunc(conn)
+	secretKey, iv, peerIV, peerPublicKey, err := t.HandshakeFunc(conn)
 	if err != nil {
 		return nil, fmt.Errorf("handshake: %w", err)
 	}
 	peer.secretKey = secretKey
 	peer.peerIV = peerIV
 	peer.iv = iv
+	peer.peerPublicKey = peerPublicKey
 
 	if t.OnPeer != nil {
 		if err = t.OnPeer(peer); err != nil {

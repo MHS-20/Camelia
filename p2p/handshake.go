@@ -7,48 +7,48 @@ import (
 	"net"
 )
 
-type HandshakeFunc func (net.Conn) (secretKey []byte, iv []byte, peerIV []byte, err error)
+type HandshakeFunc func (net.Conn) (secretKey []byte, iv []byte, peerIV []byte, peerPublicKey []byte, err error)
 
-func NOPHandshakeFunc(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte, err error) {
-    return nil, nil, nil, nil
+func NOPHandshakeFunc(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte, peerPublicKey []byte, err error) {
+    return nil, nil, nil, nil, nil
 }
 
-func DiffieHellmanHandshake(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte, err error) {
+func DiffieHellmanHandshake(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte, peerPublicKey []byte, err error) {
     curve := ecdh.P256()
     privateKey, err := curve.GenerateKey(rand.Reader)
     if err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
     publicKey := privateKey.PublicKey()
     
     if _, err := conn.Write(publicKey.Bytes()); err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
 
     peerPublicKeyBytes := make([]byte, 65) 
     _, err = conn.Read(peerPublicKeyBytes)
     if err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
-    peerPublicKey, err := curve.NewPublicKey(peerPublicKeyBytes)
+    peerPublicKeyParsed, err := curve.NewPublicKey(peerPublicKeyBytes)
     if err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
     
-    secretKey, err = privateKey.ECDH(peerPublicKey)
+    secretKey, err = privateKey.ECDH(peerPublicKeyParsed)
     if err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
 
     iv = make([]byte, 16)
     peerIV = make([]byte, 16)
     if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
     if _, err := conn.Write(iv); err != nil {
-        return nil, nil, nil, err
+        return nil, nil, nil, nil, err
     }
     _, err = conn.Read(peerIV)
 
-    return secretKey, iv, peerIV, nil
+    return secretKey, iv, peerIV, peerPublicKeyBytes, nil
 }
