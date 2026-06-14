@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/MHS-20/Kademlia/kademlia"
 	"github.com/chiragsoni81245/foreverstore/p2p"
@@ -303,7 +302,6 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
                 if err := fs.tcpTransport.Dial(tcpAddr); err != nil {
                     log.Printf("dial %s: %v", tcpAddr, err)
                 } else {
-                    time.Sleep(100 * time.Millisecond)
                     f, size, err = fs.queryTCPPeers(key)
                     if err == nil {
                         goto decrypt
@@ -330,7 +328,6 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
                     log.Printf("dial %s: %v", tcpAddr, err)
                     continue
                 }
-                time.Sleep(100 * time.Millisecond)
                 f, size, err = fs.queryTCPPeers(key)
                 if err == nil {
                     goto decrypt

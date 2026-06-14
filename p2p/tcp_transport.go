@@ -183,84 +183,95 @@ func (t *TCPTrasport) ListenAndAccept() error {
 }
 
 // Dial implements the Transport interface
+// It connects, performs the handshake, and registers the peer synchronously,
+// then starts the read loop in a background goroutine.
 func (t *TCPTrasport) Dial(addr string) error {
-    conn, err := net.Dial("tcp", addr)
-    if err != nil {
-        return err
-    }
-    go t.handleConn(conn, true)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
 
-    return nil
+	peer, err := t.initPeer(conn, true)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	go t.readLoop(peer, conn)
+	return nil
 }
 
 func (t *TCPTrasport) startAcceptConnLoop() {
-    for {
-        conn, err := t.listener.Accept()
-        if errors.Is(err, net.ErrClosed) {
-            return
-        }
-        if err!=nil {
-            fmt.Printf("TCP accept error: %s\n", err)
-        }
+	for {
+		conn, err := t.listener.Accept()
+		if errors.Is(err, net.ErrClosed) {
+			return
+		}
+		if err!=nil {
+			fmt.Printf("TCP accept error: %s\n", err)
+		}
 
-        go t.handleConn(conn, false)
-    }
+		go func() {
+			peer, err := t.initPeer(conn, false)
+			if err != nil {
+				fmt.Printf("peer init error: %s\n", err)
+				conn.Close()
+				return
+			}
+			t.readLoop(peer, conn)
+		}()
+	}
 }
 
-func (t *TCPTrasport) handleConn(conn net.Conn, outbound bool) {
-    var err error
-    defer func() {
-        fmt.Printf("dropping peer connection: %s\n" , err) 
-        conn.Close()
-    }()
+// initPeer performs the handshake and calls OnPeer synchronously.
+func (t *TCPTrasport) initPeer(conn net.Conn, outbound bool) (*TCPPeer, error) {
+	peer := NewTCPPeer(conn, outbound)
 
-    peer := NewTCPPeer(conn, outbound)
+	secretKey, iv, peerIV, err := t.HandshakeFunc(conn)
+	if err != nil {
+		return nil, fmt.Errorf("handshake: %w", err)
+	}
+	peer.secretKey = secretKey
+	peer.peerIV = peerIV
+	peer.iv = iv
 
-    secretKey, iv, peerIV, err := t.HandshakeFunc(conn)
-    peer.secretKey = secretKey
-    peer.peerIV = peerIV
-    peer.iv = iv 
+	if t.OnPeer != nil {
+		if err = t.OnPeer(peer); err != nil {
+			return nil, fmt.Errorf("OnPeer: %w", err)
+		}
+	}
 
-    if err != nil {
-        return
-    }
+	return peer, nil
+}
 
-    if t.OnPeer != nil {
-        if err = t.OnPeer(peer); err != nil { 
-            return 
-        }
-    }
+func (t *TCPTrasport) readLoop(peer *TCPPeer, conn net.Conn) {
+	defer func() {
+		fmt.Printf("dropping peer connection: %s\n", conn.RemoteAddr())
+		conn.Close()
+	}()
 
-    // Read loop
-    for {
-        rpc := RPC{}
-        // To-Do -  
-        // figure out a way to identify the error type
-        // so we can break the read loop only for case 
-        // when a connection is already closed while reading from it
-        if err = t.Decoder.Decode(peer, &rpc); err != nil { 
-            return 
-        }
+	for {
+		rpc := RPC{}
+		if err := t.Decoder.Decode(peer, &rpc); err != nil {
+			return
+		}
 
-        rpc.From = conn.RemoteAddr().String()
+		rpc.From = conn.RemoteAddr().String()
 
 		if rpc.Stream {
 			select {
 			case peer.streamStartCh <- struct{}{}:
 			case <-time.After(streamTimeout):
-				err = fmt.Errorf("timeout sending stream start signal")
 				return
 			}
 			select {
 			case <-peer.streamDoneCh:
 			case <-time.After(streamTimeout):
-				err = fmt.Errorf("timeout waiting for stream end signal")
 				return
 			}
 			continue
 		}
 
-        t.rpcch <- rpc 
-    }
-
+		t.rpcch <- rpc
+	}
 }
