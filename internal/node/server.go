@@ -110,10 +110,20 @@ func (fs *FileServer) getPeer(addr string) (p2p.Peer, error) {
     return peer, nil
 }
 
+func (fs *FileServer) dialPeer(addr string) error {
+	fs.peerLock.Lock()
+	_, exists := fs.peers[addr]
+	fs.peerLock.Unlock()
+	if exists {
+		return nil
+	}
+	return fs.tcpTransport.Dial(addr)
+}
+
 func (fs *FileServer) bootstrapTCPNetwork() error {
     for _, addr := range fs.TCPBootstrapNodes {
         log.Printf("connecting to TCP bootstrap: %s", addr)
-        if err := fs.tcpTransport.Dial(addr); err != nil {
+        if err := fs.dialPeer(addr); err != nil {
             log.Printf("TCP bootstrap dial %s: %v", addr, err)
         }
     }
@@ -300,15 +310,15 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
             tcpAddr := string(val)
             if tcpAddr != fs.TCPListenAddr {
                 log.Printf("DHT advertisement found at %s, dialing via TCP", tcpAddr)
-                if err := fs.tcpTransport.Dial(tcpAddr); err != nil {
-                    log.Printf("dial %s: %v", tcpAddr, err)
-                } else {
-                    f, size, err = fs.queryTCPPeers(key)
-                    if err == nil {
-                        goto decrypt
+                    if err := fs.dialPeer(tcpAddr); err != nil {
+                        log.Printf("dial %s: %v", tcpAddr, err)
+                    } else {
+                        f, size, err = fs.queryTCPPeers(key)
+                        if err == nil {
+                            goto decrypt
+                        }
+                        log.Printf("query via DHT peer failed: %v", err)
                     }
-                    log.Printf("query via DHT peer failed: %v", err)
-                }
             } else {
                 log.Printf("DHT advertisement points to self, skipping")
             }
@@ -325,7 +335,7 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
                     continue
                 }
                 log.Printf("trying closest node at %s", tcpAddr)
-                if err := fs.tcpTransport.Dial(tcpAddr); err != nil {
+                if err := fs.dialPeer(tcpAddr); err != nil {
                     log.Printf("dial %s: %v", tcpAddr, err)
                     continue
                 }
