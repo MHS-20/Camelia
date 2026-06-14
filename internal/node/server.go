@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -45,6 +46,7 @@ type FileServerOpts struct {
     DHTListenAddr string
     TCPBootstrapNodes []string
     DHTBootstrapAddr string
+    MaxStorageBytes int64
 }
 
 type FileServer struct {
@@ -652,6 +654,31 @@ func (fs *FileServer) Store(key string, r io.Reader) error {
     }
 
     return nil
+}
+
+type FileServerStats struct {
+    StorageUsedBytes int64
+    PeerCount        int
+}
+
+func (fs *FileServer) Stats() FileServerStats {
+    var used int64
+    filepath.Walk(fs.StorageRoot, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return nil
+        }
+        if !info.IsDir() {
+            used += info.Size()
+        }
+        return nil
+    })
+    fs.peerLock.Lock()
+    peerCount := len(fs.peers)
+    fs.peerLock.Unlock()
+    return FileServerStats{
+        StorageUsedBytes: used,
+        PeerCount:        peerCount,
+    }
 }
 
 func (fs *FileServer) OnPeer(peer p2p.Peer) error{
