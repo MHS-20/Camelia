@@ -5,7 +5,17 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"io"
+	"sync"
 )
+
+const copyBufSize = 32 * 1024
+
+var copyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, copyBufSize)
+		return &buf
+	},
+}
 
 func NewEncryptionKey() []byte {
     keyBuf := make([]byte, 32)
@@ -29,10 +39,11 @@ func CopyDecrypt(key []byte, dst io.Writer, src io.Reader, iv []byte) (int, erro
 
     totalBytesWrote := 0
 
-    var (
-        buf = make([]byte, 32*1024)
-        stream = cipher.NewCTR(block, iv)
-    )
+    bufPtr := copyBufPool.Get().(*[]byte)
+    buf := *bufPtr
+    defer copyBufPool.Put(bufPtr)
+
+    stream := cipher.NewCTR(block, iv)
 
     for {
         var wn int
@@ -75,10 +86,11 @@ func CopyEncrypt(key []byte, dst io.Writer, src io.Reader, iv []byte) (int, erro
         totalBytesWrote = len(iv)
     }
 
-    var (
-        buf = make([]byte, 32*1024)
-        stream = cipher.NewCTR(block, iv)
-    )
+    bufPtr := copyBufPool.Get().(*[]byte)
+    buf := *bufPtr
+    defer copyBufPool.Put(bufPtr)
+
+    stream := cipher.NewCTR(block, iv)
 
     for {
         var wn int
