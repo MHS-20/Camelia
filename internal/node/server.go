@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/MHS-20/Kademlia/kademlia"
 	"github.com/chiragsoni81245/foreverstore/p2p"
@@ -52,6 +53,7 @@ type FileServer struct {
     stopOnce sync.Once
 
     tofuStore *TofuStore
+    rateLimiter *peerRateLimiter
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
@@ -101,6 +103,7 @@ func NewFileServer(opts FileServerOpts) *FileServer {
         quitch: make(chan struct{}),
         peers: make(map[string]p2p.Peer),
         tofuStore: tofuStore,
+        rateLimiter: newPeerRateLimiter(10, time.Second),
     }
     tcpTransport.OnPeer = fs.OnPeer
 
@@ -176,6 +179,11 @@ func (fs *FileServer) loop() {
 	for {
 		select {
 		case rpc := <-fs.tcpTransport.Consume():
+			if !fs.rateLimiter.Allow(rpc.From) {
+				log.Printf("rate limit exceeded for peer %s, dropping message", rpc.From)
+				continue
+			}
+
 			var msg Message;
 			if err := gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&msg); err != nil {
 				log.Printf("failed to decode message from %s: %v", rpc.From, err)
