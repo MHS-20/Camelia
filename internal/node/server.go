@@ -173,40 +173,41 @@ func (fs *FileServer) handleStoreFileMessage(rpc *p2p.RPC, msgPayload *MessageSt
 }
 
 func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetFile) error {
-    log.Printf("get message received: %+v\n", msgPayload)
+	log.Printf("get message received: %+v\n", msgPayload)
 
-    var (
-        r io.Reader
-        size int64
-        err error
-    )
+	var (
+		r    io.ReadCloser
+		size int64
+		err  error
+	)
 
-    if !fs.store.Has(msgPayload.Key) {
-        log.Printf("file requested via peer %s not found", rpc.From)
-    } else {
-        r, size, err = fs.store.Read(msgPayload.Key)
-        if err != nil {
-            return err
-        }
-    }
+	if !fs.store.Has(msgPayload.Key) {
+		log.Printf("file requested via peer %s not found", rpc.From)
+	} else {
+		r, size, err = fs.store.Read(msgPayload.Key)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+	}
 
-    peer, err := fs.getPeer(rpc.From)
-    if err != nil {
-        return err
-    }
+	peer, err := fs.getPeer(rpc.From)
+	if err != nil {
+		return err
+	}
 
-    err = peer.Send(p2p.IncomingStream, nil, 0)
+	err = peer.Send(p2p.IncomingStream, nil, 0)
 
-    err = binary.Write(peer, binary.LittleEndian, size)
-    if err != nil {
-        return err
-    }
+	err = binary.Write(peer, binary.LittleEndian, size)
+	if err != nil {
+		return err
+	}
 
-    if size != 0 && r != nil {
-        _, err = io.Copy(peer, r)
-    }
+	if size != 0 && r != nil {
+		_, err = io.Copy(peer, r)
+	}
 
-    return err
+	return err
 }
 
 func (fs *FileServer) broadcast(msg *Message, r io.Reader) error {
@@ -228,7 +229,7 @@ func (fs *FileServer) broadcast(msg *Message, r io.Reader) error {
     return nil
 }
 
-func (fs *FileServer) queryTCPPeers(key string) (io.Reader, int64, error) {
+func (fs *FileServer) queryTCPPeers(key string) (io.ReadCloser, int64, error) {
     getFileMsg := &Message{
         Payload: &MessageGetFile{
             Key: key,
@@ -344,12 +345,15 @@ func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
     }
 
 decrypt:
-    decryptedBuf := new(bytes.Buffer)
-    decryptedBufSize, err := p2p.CopyDecrypt(fs.EncryptionKey, decryptedBuf, f, nil)
-    if err != nil {
-        return nil, 0, err
-    }
-    return decryptedBuf, int64(decryptedBufSize), nil
+	decryptedBuf := new(bytes.Buffer)
+	decryptedBufSize, err := p2p.CopyDecrypt(fs.EncryptionKey, decryptedBuf, f, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if closer, ok := f.(io.Closer); ok {
+		closer.Close()
+	}
+	return decryptedBuf, int64(decryptedBufSize), nil
 }
 
 func (fs *FileServer) Store(key string, r io.Reader) error {

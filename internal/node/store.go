@@ -1,7 +1,6 @@
 package node
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -109,38 +108,22 @@ func (s *Store) Delete(key string) error {
     return nil
 }
 
-func (s *Store) Read(key string) (io.Reader, int64, error) {
-    f, fi, err := s.readStream(key)
-    if err != nil {
-        return nil, 0, err
-    }
-    defer func(){
-        f.Close()
-    }()
-
-    buf := new(bytes.Buffer)
-    _, err = io.Copy(buf, f)
-    if err != nil {
-        return nil, 0, err
-    }
-
-    return buf, (*fi).Size(), nil
+func (s *Store) Read(key string) (io.ReadCloser, int64, error) {
+	pathKey := s.PathTransformFunc(key)
+	filepath := s.getAbsolutePath(pathKey.GetFilePath())
+	fi, err := os.Stat(filepath)
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := os.Open(filepath)
+	if err != nil {
+		return nil, 0, err
+	}
+	return f, fi.Size(), nil
 }
 
 func (s *Store) Write(key string, r io.Reader) (size int64, err error) {
-    return s.writeStream(key, r)
-}
-
-func (s *Store) readStream(key string) (*os.File, *os.FileInfo, error) {
-    pathKey := s.PathTransformFunc(key)
-    filepath := s.getAbsolutePath(pathKey.GetFilePath())
-    fi, err := os.Stat(filepath)
-    if err != nil {
-        return nil, nil, err
-    }
-    f, err := os.Open(filepath)
-
-    return f, &fi, err
+	return s.writeStream(key, r)
 }
 
 func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
