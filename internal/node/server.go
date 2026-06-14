@@ -2,6 +2,7 @@ package node
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
@@ -441,12 +442,23 @@ func (fs *FileServer) queryTCPPeers(key string) (io.ReadCloser, int64, error) {
 
 func (fs *FileServer) decryptFromReader(r io.ReadCloser) (io.Reader, int64, error) {
 	defer r.Close()
-	decryptedBuf := new(bytes.Buffer)
-	n, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, r)
-	if err != nil {
+	encryptedBuf := new(bytes.Buffer)
+	if _, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, encryptedBuf, r); err != nil {
 		return nil, 0, err
 	}
-	return decryptedBuf, int64(n), nil
+
+	gr, err := gzip.NewReader(encryptedBuf)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gr.Close()
+
+	decompressedBuf := new(bytes.Buffer)
+	n, err := io.Copy(decompressedBuf, gr)
+	if err != nil {
+		return nil, 0, fmt.Errorf("decompression failed: %w", err)
+	}
+	return decompressedBuf, n, nil
 }
 
 func (fs *FileServer) Get(key string) (io.Reader, int64, error) {
@@ -603,8 +615,16 @@ func (fs *FileServer) Store(key string, r io.Reader) error {
     if err := validateKey(key); err != nil {
         return err
     }
+    compressedBuf := new(bytes.Buffer)
+    gw := gzip.NewWriter(compressedBuf)
+    if _, err := io.Copy(gw, r); err != nil {
+        gw.Close()
+        return err
+    }
+    gw.Close()
+
     encryptedBuf := new(bytes.Buffer)
-    p2p.CopyEncryptHMAC(fs.EncryptionKey, encryptedBuf, r)
+    p2p.CopyEncryptHMAC(fs.EncryptionKey, encryptedBuf, compressedBuf)
 
     buf := new(bytes.Buffer)
     tee := io.TeeReader(encryptedBuf, buf)
