@@ -136,6 +136,8 @@ type TCPTransportOpts struct {
     HandshakeFunc HandshakeFunc
     Decoder Decoder
     OnPeer func(Peer) error
+    ReconnectAttempts int
+    ReconnectBackoff time.Duration
 }
 
 type TCPTransport struct {
@@ -185,7 +187,12 @@ func (t *TCPTransport) ListenAndAccept() error {
 // Dial implements the Transport interface
 // It connects, performs the handshake, and registers the peer synchronously,
 // then starts the read loop in a background goroutine.
+// If ReconnectAttempts > 0, it will automatically retry dropped outbound connections.
 func (t *TCPTransport) Dial(addr string) error {
+	return t.dialWithRetry(addr, 0)
+}
+
+func (t *TCPTransport) dialWithRetry(addr string, attempt int) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
@@ -197,8 +204,25 @@ func (t *TCPTransport) Dial(addr string) error {
 		return err
 	}
 
-	go t.readLoop(peer, conn)
+	go t.readLoopWithRetry(peer, conn, addr, attempt)
 	return nil
+}
+
+func (t *TCPTransport) readLoopWithRetry(peer *TCPPeer, conn net.Conn, addr string, attempt int) {
+	t.readLoop(peer, conn)
+
+	if t.ReconnectAttempts > 0 && attempt < t.ReconnectAttempts {
+		backoff := t.ReconnectBackoff
+		if backoff == 0 {
+			backoff = time.Second
+		}
+		backoff <<= attempt
+		log.Printf("reconnecting to %s in %v (attempt %d/%d)", addr, backoff, attempt+1, t.ReconnectAttempts)
+		time.Sleep(backoff)
+		if err := t.dialWithRetry(addr, attempt+1); err != nil {
+			log.Printf("reconnect to %s failed: %v", addr, err)
+		}
+	}
 }
 
 func (t *TCPTransport) startAcceptConnLoop() {
