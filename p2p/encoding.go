@@ -2,9 +2,12 @@ package p2p
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
 )
+
+const MaxPayloadSize int64 = 256 * 1024 * 1024
 
 type Decoder interface {
     Decode(io.Reader, *RPC) error
@@ -14,9 +17,6 @@ type DefaultDecoder struct {
 }
 
 func (dec *DefaultDecoder) Decode(r io.Reader, rpc *RPC) error{
-    // Get content length
-    // then collect streaming data of that content length
-
     var incomingDataType byte
     incomingDataTypeBytes := make([]byte, 1)
     n, err := r.Read(incomingDataTypeBytes)
@@ -31,7 +31,14 @@ func (dec *DefaultDecoder) Decode(r io.Reader, rpc *RPC) error{
     }
 
     var contentLength int64
-    binary.Read(r, binary.LittleEndian, &contentLength)
+    if err := binary.Read(r, binary.LittleEndian, &contentLength); err != nil {
+        log.Printf("failed to read content length: %v", err)
+        return err
+    }
+
+    if contentLength <= 0 || contentLength > MaxPayloadSize {
+        return fmt.Errorf("invalid payload size %d (max %d)", contentLength, MaxPayloadSize)
+    }
     rpc.Size = contentLength
 
     buf := make([]byte, contentLength)
