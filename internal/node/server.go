@@ -195,10 +195,11 @@ func (fs *FileServer) handleGetFileMessage(rpc *p2p.RPC, msgPayload *MessageGetF
 		return err
 	}
 
-	err = peer.Send(p2p.IncomingStream, nil, 0)
+	if err := peer.Send(p2p.IncomingStream, nil, 0); err != nil {
+		return err
+	}
 
-	err = binary.Write(peer, binary.LittleEndian, size)
-	if err != nil {
+	if err := binary.Write(peer, binary.LittleEndian, size); err != nil {
 		return err
 	}
 

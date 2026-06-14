@@ -21,7 +21,9 @@ func DiffieHallmanHandshake(conn net.Conn) (secretKey []byte, iv []byte, peerIV 
     }
     publicKey := privateKey.PublicKey()
     
-    conn.Write(publicKey.Bytes())
+    if _, err := conn.Write(publicKey.Bytes()); err != nil {
+        return nil, nil, nil, err
+    }
 
     peerPublicKeyBytes := make([]byte, 65) 
     _, err = conn.Read(peerPublicKeyBytes)
@@ -43,7 +45,9 @@ func DiffieHallmanHandshake(conn net.Conn) (secretKey []byte, iv []byte, peerIV 
     if _, err := io.ReadFull(rand.Reader, iv); err != nil {
         return nil, nil, nil, err
     }
-    conn.Write(iv)
+    if _, err := conn.Write(iv); err != nil {
+        return nil, nil, nil, err
+    }
     _, err = conn.Read(peerIV)
 
     return secretKey, iv, peerIV, nil
