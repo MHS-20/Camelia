@@ -87,7 +87,22 @@ func NewFileServer(opts FileServerOpts) *FileServer {
     return fs
 }
 
+const maxKeyLength = 1024
+
+func validateKey(key string) error {
+    if key == "" {
+        return fmt.Errorf("key must not be empty")
+    }
+    if len(key) > maxKeyLength {
+        return fmt.Errorf("key length %d exceeds maximum %d", len(key), maxKeyLength)
+    }
+    return nil
+}
+
 func (fs *FileServer) Delete(key string) error {
+    if err := validateKey(key); err != nil {
+        return err
+    }
     return fs.store.Delete(key)
 }
 
@@ -111,6 +126,9 @@ func (fs *FileServer) getPeer(addr string) (p2p.Peer, error) {
 }
 
 func (fs *FileServer) dialPeer(addr string) error {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("invalid peer address %q: %w", addr, err)
+	}
 	fs.peerLock.Lock()
 	_, exists := fs.peers[addr]
 	fs.peerLock.Unlock()
@@ -343,6 +361,9 @@ func (fs *FileServer) queryTCPPeers(key string) (io.ReadCloser, int64, error) {
 }
 
 func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
+    if err := validateKey(key); err != nil {
+        return nil, 0, err
+    }
     if fs.store.Has(key) {
         f, size, err = fs.store.Read(key)
         if err != nil {
@@ -421,6 +442,9 @@ decrypt:
 }
 
 func (fs *FileServer) Store(key string, r io.Reader) error {
+    if err := validateKey(key); err != nil {
+        return err
+    }
     encryptedBuf := new(bytes.Buffer)
     p2p.CopyEncrypt(fs.EncryptionKey, encryptedBuf, r, nil)
 
