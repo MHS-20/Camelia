@@ -13,7 +13,7 @@ func NOPHandshakeFunc(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte
     return nil, nil, nil, nil
 }
 
-func DiffieHallmanHandshake(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte, err error) {
+func DiffieHellmanHandshake(conn net.Conn) (secretKey []byte, iv []byte, peerIV []byte, err error) {
     curve := ecdh.P256()
     privateKey, err := curve.GenerateKey(rand.Reader)
     if err != nil {

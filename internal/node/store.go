@@ -41,7 +41,7 @@ func CASPathTransformFunc(key string) PathKey {
 
 type PathTransformFunc func(string) PathKey
 
-func DefaultPathTranformFunc(key string) PathKey {
+func DefaultPathTransformFunc(key string) PathKey {
     return PathKey{
         Path: key,
         Filename: key,
@@ -59,7 +59,7 @@ type Store struct {
 
 func NewStore(opts StoreOpts) *Store {
     if opts.PathTransformFunc == nil {
-        opts.PathTransformFunc = DefaultPathTranformFunc
+        opts.PathTransformFunc = DefaultPathTransformFunc
     }
     return &Store{
         StoreOpts: opts,

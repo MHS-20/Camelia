@@ -42,7 +42,7 @@ type FileServer struct {
 
     dhtNode      *kademlia.Node
     dhtTransport *kademlia.UDPTransport
-    tcpTransport *p2p.TCPTrasport
+    tcpTransport *p2p.TCPTransport
 
     peerLock sync.Mutex
     peers map[string]p2p.Peer
@@ -60,7 +60,7 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 
     tcpOpts := p2p.TCPTransportOpts{
         ListenAddr: opts.TCPListenAddr,
-        HandshakeFunc: p2p.DiffieHallmanHandshake,
+        HandshakeFunc: p2p.DiffieHellmanHandshake,
         Decoder: &p2p.DefaultDecoder{},
     }
     tcpTransport := p2p.NewTCPTransport(tcpOpts)

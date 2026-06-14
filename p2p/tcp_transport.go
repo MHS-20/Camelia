@@ -122,10 +122,10 @@ func (peer *TCPPeer) ConsumeStreamStart() {
 	}
 }
 
-func NewTCPPeer(conn net.Conn, outboud bool) *TCPPeer {
+func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 	return &TCPPeer{
 		Conn: conn,
-		outbound: outboud,
+		outbound: outbound,
 		streamStartCh: make(chan struct{}),
 		streamDoneCh: make(chan struct{}),
 	}
@@ -138,20 +138,20 @@ type TCPTransportOpts struct {
     OnPeer func(Peer) error
 }
 
-type TCPTrasport struct {
+type TCPTransport struct {
     TCPTransportOpts
     listener net.Listener
     rpcch chan RPC
 }
 
-func NewTCPTransport(opts TCPTransportOpts) *TCPTrasport {
+func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
     if opts.HandshakeFunc == nil {
         opts.HandshakeFunc = NOPHandshakeFunc
     }
     if  opts.Decoder == nil {
         opts.Decoder = &DefaultDecoder{}
     }
-    return &TCPTrasport{
+    return &TCPTransport{
         TCPTransportOpts: opts,
         rpcch: make(chan RPC),
     }
@@ -159,16 +159,16 @@ func NewTCPTransport(opts TCPTransportOpts) *TCPTrasport {
 
 // Consume implements the transport interface, which will return a read only channel
 // for reading incoming messages received from another peer in the network
-func (t *TCPTrasport) Consume() <-chan RPC {
+func (t *TCPTransport) Consume() <-chan RPC {
     return t.rpcch
 }
 
 // Close implements the Transport interface
-func (t *TCPTrasport) Close() error {
+func (t *TCPTransport) Close() error {
     return t.listener.Close()
 }
 
-func (t *TCPTrasport) ListenAndAccept() error {
+func (t *TCPTransport) ListenAndAccept() error {
     var err error
     t.listener, err = net.Listen("tcp", t.ListenAddr)
     if err!=nil {
@@ -185,7 +185,7 @@ func (t *TCPTrasport) ListenAndAccept() error {
 // Dial implements the Transport interface
 // It connects, performs the handshake, and registers the peer synchronously,
 // then starts the read loop in a background goroutine.
-func (t *TCPTrasport) Dial(addr string) error {
+func (t *TCPTransport) Dial(addr string) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
@@ -201,7 +201,7 @@ func (t *TCPTrasport) Dial(addr string) error {
 	return nil
 }
 
-func (t *TCPTrasport) startAcceptConnLoop() {
+func (t *TCPTransport) startAcceptConnLoop() {
 	for {
 		conn, err := t.listener.Accept()
 		if errors.Is(err, net.ErrClosed) {
@@ -224,7 +224,7 @@ func (t *TCPTrasport) startAcceptConnLoop() {
 }
 
 // initPeer performs the handshake and calls OnPeer synchronously.
-func (t *TCPTrasport) initPeer(conn net.Conn, outbound bool) (*TCPPeer, error) {
+func (t *TCPTransport) initPeer(conn net.Conn, outbound bool) (*TCPPeer, error) {
 	peer := NewTCPPeer(conn, outbound)
 
 	secretKey, iv, peerIV, err := t.HandshakeFunc(conn)
@@ -244,7 +244,7 @@ func (t *TCPTrasport) initPeer(conn net.Conn, outbound bool) (*TCPPeer, error) {
 	return peer, nil
 }
 
-func (t *TCPTrasport) readLoop(peer *TCPPeer, conn net.Conn) {
+func (t *TCPTransport) readLoop(peer *TCPPeer, conn net.Conn) {
 	defer func() {
 		fmt.Printf("dropping peer connection: %s\n", conn.RemoteAddr())
 		conn.Close()
