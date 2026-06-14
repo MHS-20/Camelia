@@ -388,85 +388,93 @@ func (fs *FileServer) queryTCPPeers(key string) (io.ReadCloser, int64, error) {
     return nil, 0, firstErr
 }
 
-func (fs *FileServer) Get(key string) (f io.Reader, size int64, err error) {
+func (fs *FileServer) decryptFromReader(r io.ReadCloser) (io.Reader, int64, error) {
+	defer r.Close()
+	decryptedBuf := new(bytes.Buffer)
+	n, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, r)
+	if err != nil {
+		return nil, 0, err
+	}
+	return decryptedBuf, int64(n), nil
+}
+
+func (fs *FileServer) Get(key string) (io.Reader, int64, error) {
     if err := validateKey(key); err != nil {
         return nil, 0, err
     }
     if fs.store.Has(key) {
-        f, size, err = fs.store.Read(key)
+        r, _, err := fs.store.Read(key)
         if err != nil {
             return nil, 0, err
         }
-    } else {
-        log.Printf("file not found locally, checking DHT")
-
-        keyNodeID := kademlia.NewNodeID([]byte(key))
-
-        val, closest, err := fs.dhtNode.FindValue(keyNodeID)
-        if err != nil {
-            log.Printf("DHT find value: %v", err)
+        out, n, err := fs.decryptFromReader(r)
+        if err == nil {
+            return out, n, nil
         }
+        log.Printf("integrity check failed for local copy of %s: %v, removing", key, err)
+        fs.store.Delete(key)
+    }
 
-        if val != nil {
-            tcpAddr := string(val)
-            if tcpAddr != fs.TCPListenAddr {
-                log.Printf("DHT advertisement found at %s, dialing via TCP", tcpAddr)
-                    if err := fs.dialPeer(tcpAddr); err != nil {
-                        log.Printf("dial %s: %v", tcpAddr, err)
-                    } else {
-                        f, size, err = fs.queryTCPPeers(key)
-                        if err == nil {
-                            goto decrypt
-                        }
-                        log.Printf("query via DHT peer failed: %v", err)
-                    }
+    log.Printf("file not found locally, checking DHT")
+    keyNodeID := kademlia.NewNodeID([]byte(key))
+    val, closest, _ := fs.dhtNode.FindValue(keyNodeID)
+
+    if val != nil {
+        tcpAddr := string(val)
+        if tcpAddr != fs.TCPListenAddr {
+            log.Printf("DHT advertisement found at %s, dialing via TCP", tcpAddr)
+            if err := fs.dialPeer(tcpAddr); err != nil {
+                log.Printf("dial %s: %v", tcpAddr, err)
             } else {
-                log.Printf("DHT advertisement points to self, skipping")
-            }
-        }
-
-        if len(closest) > 0 {
-            log.Printf("trying %d closest DHT nodes", len(closest))
-            for _, c := range closest {
-                nodeID := kademlia.NewNodeID([]byte(c.ID.String()))
-                val, _, err := fs.dhtNode.FindValue(nodeID)
-                if err != nil || val == nil {
-                    log.Printf("no TCP address advertised for node %s", c.ID)
-                    continue
-                }
-                tcpAddr := string(val)
-                if tcpAddr == fs.TCPListenAddr {
-                    continue
-                }
-                log.Printf("trying closest node at %s", tcpAddr)
-                if err := fs.dialPeer(tcpAddr); err != nil {
-                    log.Printf("dial %s: %v", tcpAddr, err)
-                    continue
-                }
-                f, size, err = fs.queryTCPPeers(key)
+                r, _, err := fs.queryTCPPeers(key)
                 if err == nil {
-                    goto decrypt
+                    out, n, err := fs.decryptFromReader(r)
+                    if err == nil {
+                        return out, n, nil
+                    }
+                    log.Printf("integrity check failed for file from DHT peer %s: %v, trying next", tcpAddr, err)
+                    fs.store.Delete(key)
                 }
             }
-        }
-
-        log.Printf("DHT lookup failed, checking existing TCP peers")
-        f, size, err = fs.queryTCPPeers(key)
-        if err != nil {
-            return nil, 0, err
         }
     }
 
-decrypt:
-	decryptedBuf := new(bytes.Buffer)
-	decryptedBufSize, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, f)
-	if err != nil {
-		return nil, 0, err
-	}
-	if closer, ok := f.(io.Closer); ok {
-		closer.Close()
-	}
-	return decryptedBuf, int64(decryptedBufSize), nil
+    if len(closest) > 0 {
+        log.Printf("trying %d closest DHT nodes", len(closest))
+        for _, c := range closest {
+            nodeID := kademlia.NewNodeID([]byte(c.ID.String()))
+            val, _, _ := fs.dhtNode.FindValue(nodeID)
+            if val == nil {
+                continue
+            }
+            tcpAddr := string(val)
+            if tcpAddr == fs.TCPListenAddr {
+                continue
+            }
+            log.Printf("trying closest node at %s", tcpAddr)
+            if err := fs.dialPeer(tcpAddr); err != nil {
+                log.Printf("dial %s: %v", tcpAddr, err)
+                continue
+            }
+            r, _, err := fs.queryTCPPeers(key)
+            if err != nil {
+                continue
+            }
+            out, n, err := fs.decryptFromReader(r)
+            if err == nil {
+                return out, n, nil
+            }
+            log.Printf("integrity check failed for file from peer %s: %v, trying next", tcpAddr, err)
+            fs.store.Delete(key)
+        }
+    }
+
+    log.Printf("DHT lookup failed, checking existing TCP peers")
+    r, _, err := fs.queryTCPPeers(key)
+    if err != nil {
+        return nil, 0, err
+    }
+    return fs.decryptFromReader(r)
 }
 
 func (fs *FileServer) Store(key string, r io.Reader) error {
