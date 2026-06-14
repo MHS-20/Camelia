@@ -139,7 +139,7 @@ func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
 
     pathKey := s.PathTransformFunc(key) 
 
-    if err := os.MkdirAll(s.getAbsolutePath(pathKey.Path), os.ModePerm); err != nil {
+    if err := os.MkdirAll(s.getAbsolutePath(pathKey.Path), 0700); err != nil {
         return 0, err
     }
 
@@ -148,6 +148,7 @@ func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
     if err != nil {
         return 0, err
     }
+    tmpFile.Chmod(0600)
     tmpPath := tmpFile.Name()
 
     n, err := io.Copy(tmpFile, r)
