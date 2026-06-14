@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -15,13 +16,31 @@ import (
 )
 
 func main() {
-	tcpAddr := env("TCP_ADDR", ":4000")
-	dhtAddr := env("DHT_ADDR", ":9000")
+	cfgPath := env("CONFIG", "config.json")
+	cfg := loadConfig(cfgPath)
+
+	defTCP := ":4000"
+	defDHT := ":9000"
+	defKey := "rptreftgrtgfrefrdeswfrdefrdejtkg"
+	if cfg != nil {
+		if cfg.TCPAddr != "" {
+			defTCP = cfg.TCPAddr
+		}
+		if cfg.DHTAddr != "" {
+			defDHT = cfg.DHTAddr
+		}
+		if cfg.EncryptionKey != "" {
+			defKey = cfg.EncryptionKey
+		}
+	}
+
+	tcpAddr := env("TCP_ADDR", defTCP)
+	dhtAddr := env("DHT_ADDR", defDHT)
 	tcpBootstrap := env("TCP_BOOTSTRAP", "")
 	dhtBootstrap := env("DHT_BOOTSTRAP", "")
 	runTest, _ := strconv.ParseBool(env("RUN_TEST", "false"))
 
-	encryptionKey := env("ENCRYPTION_KEY", "rptreftgrtgfrefrdeswfrdefrdejtkg")
+	encryptionKey := env("ENCRYPTION_KEY", defKey)
 	if encryptionKey == "" {
 		log.Fatal("ENCRYPTION_KEY must be set to a 32-byte AES key")
 	}
@@ -29,13 +48,23 @@ func main() {
 		log.Fatalf("ENCRYPTION_KEY must be exactly 32 bytes, got %d", len(encryptionKey))
 	}
 
+	defStorageRoot := fmt.Sprintf("storage/%s_network", tcpAddr)
+	if cfg != nil && cfg.StorageRoot != "" {
+		defStorageRoot = cfg.StorageRoot
+	}
+	storageRoot := env("STORAGE_ROOT", defStorageRoot)
+
 	opts := node.FileServerOpts{
-		StorageRoot:       fmt.Sprintf("storage/%s_network", tcpAddr),
+		StorageRoot:       storageRoot,
 		EncryptionKey:     []byte(encryptionKey),
 		PathTransformFunc: node.CASPathTransformFunc,
 		TCPListenAddr:     tcpAddr,
 		DHTListenAddr:     dhtAddr,
 		DHTBootstrapAddr:  dhtBootstrap,
+	}
+
+	if cfg != nil && cfg.MaxStorageMB > 0 {
+		opts.MaxStorageBytes = cfg.MaxStorageMB * 1024 * 1024
 	}
 
 	if tcpBootstrap != "" {
@@ -47,7 +76,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	httpAddr := env("HTTP_ADDR", "")
+	defHTTP := ""
+	if cfg != nil {
+		defHTTP = cfg.HTTPAddr
+	}
+	httpAddr := env("HTTP_ADDR", defHTTP)
 	if httpAddr != "" {
 		srv := node.NewHTTPServer(fs, httpAddr)
 		if err := srv.Start(); err != nil {
@@ -109,6 +142,30 @@ fs.Delete(key)
 	}
 
 	log.Printf("Test PASSED: retrieved %d bytes, content matches", len(out))
+}
+
+type configFile struct {
+	TCPAddr       string `json:"tcp_addr"`
+	DHTAddr       string `json:"dht_addr"`
+	TCPBootstrap  string `json:"tcp_bootstrap"`
+	DHTBootstrap  string `json:"dht_bootstrap"`
+	EncryptionKey string `json:"encryption_key"`
+	HTTPAddr      string `json:"http_addr"`
+	StorageRoot   string `json:"storage_root"`
+	MaxStorageMB  int64  `json:"max_storage_mb"`
+}
+
+func loadConfig(path string) *configFile {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var cfg configFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		log.Printf("failed to parse config file %s: %v", path, err)
+		return nil
+	}
+	return &cfg
 }
 
 func env(key, def string) string {
