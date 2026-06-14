@@ -5,21 +5,19 @@ import (
 	"net"
 )
 
-// Peer is an interface that represents the remote node
+// Peer represents a remote node that can send and receive messages and streams.
 type Peer interface {
-    net.Conn
-    Send(t byte, r io.Reader, size int64) error
-    CloseStream()
-    ReadStream(size int64) io.Reader
-    ConsumeStreamStart()
+	net.Conn
+	Send(t byte, r io.Reader, size int64) error
+	CloseStream()
+	ReadStream(size int64) io.Reader
+	ConsumeStreamStart()
 }
 
-// Transport is anything that handles the communication
-// between nodes in the network
-// This can be of form TCP, UDP, or websockets
+// Transport handles network communication between nodes.
 type Transport interface {
-    ListenAndAccept() error
-    Dial(string) error
-    Consume() <-chan RPC
-    Close() error
+	ListenAndAccept() error
+	Dial(string) error
+	Consume() <-chan RPC
+	Close() error
 }

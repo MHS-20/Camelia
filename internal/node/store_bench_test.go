@@ -9,8 +9,7 @@ import (
 )
 
 func BenchmarkStoreWrite(b *testing.B) {
-	store := newStore()
-	defer teardown(&testing.T{}, store)
+	store := newStoreForTest(b)
 
 	sizes := []int{64, 4096, 1048576}
 	for _, size := range sizes {
@@ -31,8 +30,7 @@ func BenchmarkStoreWrite(b *testing.B) {
 }
 
 func BenchmarkStoreRead(b *testing.B) {
-	store := newStore()
-	defer teardown(&testing.T{}, store)
+	store := newStoreForTest(b)
 
 	sizes := []int{64, 4096, 1048576}
 	for _, size := range sizes {

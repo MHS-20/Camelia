@@ -9,12 +9,14 @@ import (
 	"sync"
 )
 
+// TofuStore pins peer public key hashes on first connection (trust on first use).
 type TofuStore struct {
 	mu       sync.Mutex
 	filePath string
 	peers    map[string]string
 }
 
+// NewTofuStore loads or creates a TOFU trust store persisted to disk.
 func NewTofuStore(storageRoot string) (*TofuStore, error) {
 	ts := &TofuStore{
 		filePath: storageRoot + "/trusted_peers.json",
@@ -45,6 +47,7 @@ func (ts *TofuStore) save() error {
 	return os.WriteFile(ts.filePath, data, 0600)
 }
 
+// CheckOrPin verifies a peer public key or pins it on first encounter.
 func (ts *TofuStore) CheckOrPin(peerID string, publicKey []byte) error {
 	hash := sha256.Sum256(publicKey)
 	hashStr := hex.EncodeToString(hash[:])

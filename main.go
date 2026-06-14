@@ -103,47 +103,6 @@ func main() {
 	fs.Stop()
 }
 
-func runDemoTest(fs *node.FileServer) {
-	key := "myprivatedata"
-
-	data := []byte("hello from foreverstore at " + time.Now().String())
-	tmpFile, err := os.CreateTemp("", "foreverstore-*")
-	if err != nil {
-		log.Fatalf("create temp file: %v", err)
-	}
-	if _, err := tmpFile.Write(data); err != nil {
-		log.Fatalf("write temp file: %v", err)
-	}
-	tmpFile.Seek(0, 0)
-
-	log.Printf("Storing %d bytes under key %q", len(data), key)
-	if err := fs.Store(key, tmpFile); err != nil {
-		log.Fatalf("store: %v", err)
-	}
-	tmpFile.Close()
-
-	time.Sleep(1 * time.Second)
-
-fs.Delete(key)
-	log.Printf("Deleted local copy of %q, retrieving from network...", key)
-
-	r, _, err := fs.Get(key)
-	if err != nil {
-		log.Fatalf("get: %v", err)
-	}
-
-	out, err := io.ReadAll(r)
-	if err != nil {
-		log.Fatalf("read: %v", err)
-	}
-
-	if string(out) != string(data) {
-		log.Fatalf("data mismatch: got %q, want %q", string(out), string(data))
-	}
-
-	log.Printf("Test PASSED: retrieved %d bytes, content matches", len(out))
-}
-
 type configFile struct {
 	TCPAddr       string `json:"tcp_addr"`
 	DHTAddr       string `json:"dht_addr"`
@@ -166,6 +125,47 @@ func loadConfig(path string) *configFile {
 		return nil
 	}
 	return &cfg
+}
+
+func runDemoTest(fs *node.FileServer) {
+	key := "myprivatedata"
+
+	data := []byte("hello from foreverstore at " + time.Now().String())
+	tmpFile, err := os.CreateTemp("", "foreverstore-*")
+	if err != nil {
+		log.Fatalf("create temp file: %v", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		log.Fatalf("write temp file: %v", err)
+	}
+	tmpFile.Seek(0, 0)
+
+	log.Printf("Storing %d bytes under key %q", len(data), key)
+	if err := fs.Store(key, tmpFile); err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	tmpFile.Close()
+
+	time.Sleep(1 * time.Second)
+
+	fs.Delete(key)
+	log.Printf("Deleted local copy of %q, retrieving from network...", key)
+
+	r, _, err := fs.Get(key)
+	if err != nil {
+		log.Fatalf("get: %v", err)
+	}
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		log.Fatalf("read: %v", err)
+	}
+
+	if string(out) != string(data) {
+		log.Fatalf("data mismatch: got %q, want %q", string(out), string(data))
+	}
+
+	log.Printf("Test PASSED: retrieved %d bytes, content matches", len(out))
 }
 
 func env(key, def string) string {

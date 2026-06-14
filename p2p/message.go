@@ -5,10 +5,7 @@ const (
 	IncomingStream  = 0x2
 )
 
-// RPC holds any arbitrary data that is being send over the
-// each transport between two nodes.
-
-
+// RPC represents a parsed message or stream signal received from a peer.
 type RPC struct {
     From string
     Size int64

@@ -38,6 +38,7 @@ type MessageStoreFile struct {
     Size int64
 }
 
+// FileServerOpts configures a FileServer instance.
 type FileServerOpts struct {
     StorageRoot string
     PathTransformFunc PathTransformFunc
@@ -49,6 +50,7 @@ type FileServerOpts struct {
     MaxStorageBytes int64
 }
 
+// FileServer is the main P2P node that handles storage, retrieval, and peer communication.
 type FileServer struct {
     FileServerOpts
 
@@ -67,6 +69,7 @@ type FileServer struct {
     rateLimiter *peerRateLimiter
 }
 
+// NewFileServer creates a FileServer with DHT, TCP transport, TOFU store, and rate limiter.
 func NewFileServer(opts FileServerOpts) *FileServer {
     storeOpts := StoreOpts{
         Root: opts.StorageRoot,
@@ -463,6 +466,7 @@ func (fs *FileServer) decryptFromReader(r io.ReadCloser) (io.Reader, int64, erro
 	return decompressedBuf, n, nil
 }
 
+// Get retrieves a file by key, checking local store, DHT, then TCP peers.
 func (fs *FileServer) Get(key string) (io.Reader, int64, error) {
     if err := validateKey(key); err != nil {
         return nil, 0, err
@@ -548,20 +552,31 @@ func (fs *FileServer) GetRange(key string, offset, length int64) (io.Reader, int
 	}
 
 	if fs.store.Has(key) {
-		r, size, err := fs.store.ReadRange(key, offset, length)
+		fullReader, _, err := fs.store.Read(key)
 		if err != nil {
 			return nil, 0, err
 		}
-		defer r.Close()
-		scope := size
-		if length > 0 && length < scope {
-			scope = length
-		}
-		decryptedBuf := new(bytes.Buffer)
-		if _, err := p2p.CopyDecryptHMAC(fs.EncryptionKey, decryptedBuf, r); err != nil {
+		defer fullReader.Close()
+
+		fullDecrypted, _, err := fs.decryptFromReader(fullReader)
+		if err != nil {
 			return nil, 0, err
 		}
-		return decryptedBuf, scope, nil
+
+		fullData, err := io.ReadAll(fullDecrypted)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if offset >= int64(len(fullData)) {
+			return bytes.NewReader(nil), 0, nil
+		}
+		end := offset + length
+		if length <= 0 || end > int64(len(fullData)) {
+			end = int64(len(fullData))
+		}
+		scope := end - offset
+		return bytes.NewReader(fullData[offset:end]), scope, nil
 	}
 
 	fs.peerLock.Lock()
@@ -613,6 +628,7 @@ func (fs *FileServer) GetRange(key string, offset, length int64) (io.Reader, int
 	return nil, 0, fmt.Errorf("file range not found on any peer")
 }
 
+// Store compresses, encrypts, persists locally, broadcasts to peers, and advertises in DHT.
 func (fs *FileServer) Store(key string, r io.Reader) error {
     if err := validateKey(key); err != nil {
         return err
@@ -656,6 +672,7 @@ func (fs *FileServer) Store(key string, r io.Reader) error {
     return nil
 }
 
+// FileServerStats contains storage and peer metrics.
 type FileServerStats struct {
     StorageUsedBytes int64
     PeerCount        int
@@ -737,6 +754,7 @@ func (fs *FileServer) loadCachedPeers() {
 	}
 }
 
+// Start boots DHT, TCP listener, loads cached peers, bootstraps DHT and TCP, and starts the message loop.
 func (fs *FileServer) Start() error{
     if err := fs.dhtTransport.Listen(fs.DHTListenAddr); err != nil {
         return fmt.Errorf("DHT listen: %w", err)
@@ -785,6 +803,7 @@ func (fs *FileServer) bootstrapDHT() error {
     return nil
 }
 
+// Stop saves peer cache and shuts down the DHT node.
 func (fs *FileServer) Stop() {
     fs.stopOnce.Do(func() {
         fs.saveCachedPeers()

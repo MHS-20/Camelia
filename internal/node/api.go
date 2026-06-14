@@ -8,11 +8,13 @@ import (
 	"net/http"
 )
 
+// HTTPServer exposes HTTP endpoints for get, store, stats, and peer listing.
 type HTTPServer struct {
 	fs     *FileServer
 	server *http.Server
 }
 
+// NewHTTPServer creates an HTTP server backed by a FileServer.
 func NewHTTPServer(fs *FileServer, addr string) *HTTPServer {
 	h := &HTTPServer{fs: fs}
 	mux := http.NewServeMux()
